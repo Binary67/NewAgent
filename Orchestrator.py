@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 def run_experiment_loop(
     target_repo: str | Path,
     eval_command: str,
-    codex_instruction: str,
+    role: str = "experiment",
     num_iterations: int = 5,
     eval_strategy: str = "maximize",
 ):
@@ -61,8 +61,7 @@ def run_experiment_loop(
         instruction = (
             f"IMPORTANT: You must only create or modify files within your current "
             f"working directory ({worktree_path}). "
-            f"Do not access, read, or modify any files outside this directory.\n\n"
-            f"{codex_instruction}"
+            f"Do not access, read, or modify any files outside this directory."
         )
 
         codex_response = ""
@@ -70,7 +69,7 @@ def run_experiment_loop(
         session_log = None
         start_time = time.time()
         try:
-            session_result = run_codex_session(cwd=worktree_path, instruction=instruction, role="experiment")
+            session_result = run_codex_session(cwd=worktree_path, instruction=instruction, role=role)
             codex_response = session_result.turn_result.response_text
             session_log = session_result.session_log_path
             print(f"Codex done. Session log: {session_log}")

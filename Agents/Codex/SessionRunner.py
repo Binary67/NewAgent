@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -8,7 +7,7 @@ from typing import Mapping
 from .Agent import CodexAgent, CodexTurnResult
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-CONFIG_PATH = PROJECT_ROOT / "codex_config.toml"
+PROMPTS_DIR = PROJECT_ROOT / "Prompts"
 
 
 @dataclass(frozen=True)
@@ -18,22 +17,21 @@ class CodexSessionRunResult:
 
 
 def _load_instructions(role: str | None) -> str:
-    """Load base and optional role instructions from codex_config.toml."""
-    try:
-        config = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    except (FileNotFoundError, tomllib.TOMLDecodeError):
-        return ""
-
+    """Load base and optional role instructions from Prompts/ directory."""
     parts = []
 
-    base = config.get("instructions", {}).get("base", "").strip()
-    if base:
-        parts.append(base)
+    base_path = PROMPTS_DIR / "base.md"
+    if base_path.exists():
+        base = base_path.read_text(encoding="utf-8").strip()
+        if base:
+            parts.append(base)
 
     if role:
-        role_text = config.get("roles", {}).get(role, {}).get("instructions", "").strip()
-        if role_text:
-            parts.append(role_text)
+        role_path = PROMPTS_DIR / f"{role}.md"
+        if role_path.exists():
+            role_text = role_path.read_text(encoding="utf-8").strip()
+            if role_text:
+                parts.append(role_text)
 
     return "\n\n".join(parts)
 

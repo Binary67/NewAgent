@@ -1,16 +1,20 @@
+import tomllib
+from pathlib import Path
+
+from ConfigGuard import ensure_codex_config
 from Orchestrator import run_experiment_loop
 
-# === Configure these before running ===
-TARGET_REPO = "D:/HousePricePrediction"
-EVAL_COMMAND = "uv run D:/HiddenEval/hidden_evaluation.py"
-EVAL_STRATEGY = "minimize"  # "maximize" or "minimize"
-CODEX_INSTRUCTION = ""
-NUM_ITERATIONS = 1
+CONFIG_PATH = Path(__file__).resolve().parent / "CodexConfig.toml"
+
+ensure_codex_config()
+
+config = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+experiment = config["Experiment"]
 
 run_experiment_loop(
-    target_repo=TARGET_REPO,
-    eval_command=EVAL_COMMAND,
-    eval_strategy=EVAL_STRATEGY,
-    codex_instruction=CODEX_INSTRUCTION,
-    num_iterations=NUM_ITERATIONS,
+    target_repo=experiment["target_repo"],
+    eval_command=experiment["eval_command"],
+    eval_strategy=experiment["eval_strategy"],
+    role=experiment["role"],
+    num_iterations=experiment["num_iterations"],
 )

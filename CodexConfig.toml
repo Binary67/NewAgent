@@ -1,0 +1,6 @@
+[Experiment]
+target_repo = "D:/HousePricePrediction"
+eval_command = "uv run D:/HiddenEval/evaluation.py"
+eval_strategy = "maximize"
+num_iterations = 1
+role = "experiment"
