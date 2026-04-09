@@ -31,6 +31,20 @@ def reset_experiments(target_repo: str | Path | None = None):
         subprocess.run(["git", "-C", str(target), "worktree", "prune"], check=True)
         print(f"Pruned worktree refs: {target}")
 
+        for pattern in ("experiment/iter_*", "best/*"):
+            branch_output = subprocess.run(
+                ["git", "-C", str(target), "branch", "--list", pattern],
+                capture_output=True, text=True,
+            ).stdout.strip()
+            for line in branch_output.splitlines():
+                name = line.strip().removeprefix("* ")
+                if name:
+                    subprocess.run(
+                        ["git", "-C", str(target), "branch", "-D", name],
+                        capture_output=True,
+                    )
+                    print(f"Deleted branch: {name}")
+
     print("\nReset complete.")
 
 

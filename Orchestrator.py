@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 import time
 from datetime import datetime
@@ -15,20 +16,28 @@ def run_experiment_loop(
     eval_command: str,
     codex_instruction: str,
     num_iterations: int = 5,
+    eval_strategy: str = "maximize",
 ):
+    maximize = eval_strategy == "maximize"
     target_repo = Path(target_repo).resolve()
     worktree_dir = PROJECT_ROOT / "Worktrees"
     logs_dir = PROJECT_ROOT / "Logs"
     worktree_dir.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
 
-    base_commit = subprocess.run(
-        ["git", "-C", str(target_repo), "rev-parse", "HEAD"],
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
+    prev_best_commit, prev_best_score = _get_best_branch_info(target_repo)
+    if prev_best_commit:
+        base_commit = prev_best_commit
+        print(f"Resuming from previous best: {base_commit} (score: {prev_best_score})")
+    else:
+        base_commit = subprocess.run(
+            ["git", "-C", str(target_repo), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        print(f"Starting from HEAD: {base_commit}")
 
     experiment_log = logs_dir / f"experiment_{datetime.now():%Y%m%d_%H%M%S}.md"
-    _write_header(experiment_log, target_repo, base_commit, eval_command, num_iterations)
+    _write_header(experiment_log, target_repo, base_commit, eval_command, num_iterations, eval_strategy)
 
     results = []
     for i in range(1, num_iterations + 1):
@@ -85,10 +94,51 @@ def run_experiment_loop(
             status=status,
             error=eval_error,
         )
+
+        if status == "completed":
+            parsed = _parse_score(eval_score)
+            if parsed is not None:
+                try:
+                    commit_hash = _commit_and_branch(target_repo, worktree_path, i, parsed)
+                    result["commit_hash"] = commit_hash
+                    result["parsed_score"] = parsed
+                    print(f"Saved to branch: experiment/iter_{i:03d}")
+                except Exception as exc:
+                    print(f"Warning: failed to save branch for iteration {i}: {exc}")
+
         results.append(result)
         _append_iteration(experiment_log, result)
 
-    _append_summary(experiment_log, results)
+    # Determine best iteration and save best branch
+    completed_results = [r for r in results if r.get("parsed_score") is not None]
+    best_result = None
+
+    if completed_results:
+        best_result = (max if maximize else min)(completed_results, key=lambda r: r["parsed_score"])
+        new_best_score = best_result["parsed_score"]
+        new_best_iter = best_result["iteration"]
+        new_best_commit = best_result.get("commit_hash", "")
+
+        should_update = prev_best_score is None or (
+            new_best_score > prev_best_score if maximize else new_best_score < prev_best_score
+        )
+
+        if should_update and new_best_commit:
+            _delete_branches(target_repo, "best/*")
+            subprocess.run(
+                ["git", "-C", str(target_repo), "branch",
+                 f"best/iter_{new_best_iter:03d}", new_best_commit],
+                capture_output=True, text=True, check=True,
+            )
+            print(f"Best branch: best/iter_{new_best_iter:03d} (score: {new_best_score})")
+        elif not should_update:
+            print(f"No improvement over previous best ({prev_best_score}). Keeping existing best branch.")
+
+        _delete_branches(target_repo, "experiment/iter_*")
+    else:
+        print("No successful iterations. Keeping existing best branch (if any).")
+
+    _append_summary(experiment_log, results, best_result)
     print(f"\nExperiment complete. Log: {experiment_log}")
     return results
 
@@ -105,6 +155,73 @@ def _make_result(iteration, worktree_path, **kwargs):
         "error": "",
         **kwargs,
     }
+
+
+def _parse_score(eval_score_str: str) -> float | None:
+    lines = [l for l in eval_score_str.strip().splitlines() if l.strip()]
+    if not lines:
+        return None
+    try:
+        return float(lines[-1].strip())
+    except ValueError:
+        return None
+
+
+def _commit_and_branch(target_repo: Path, worktree_path: Path, iteration: int, score: float) -> str:
+    subprocess.run(
+        ["git", "-C", str(worktree_path), "add", "-A"],
+        capture_output=True, check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(worktree_path), "commit", "-m",
+         f"Experiment iteration {iteration} - score: {score}"],
+        capture_output=True, text=True, check=True,
+    )
+    commit_hash = subprocess.run(
+        ["git", "-C", str(worktree_path), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "-C", str(target_repo), "branch",
+         f"experiment/iter_{iteration:03d}", commit_hash],
+        capture_output=True, text=True, check=True,
+    )
+    return commit_hash
+
+
+def _get_best_branch_info(target_repo: Path) -> tuple[str, float | None]:
+    output = subprocess.run(
+        ["git", "-C", str(target_repo), "branch", "--list", "best/*"],
+        capture_output=True, text=True,
+    ).stdout.strip()
+    if not output:
+        return ("", None)
+    branch_name = output.splitlines()[0].strip().removeprefix("* ")
+    commit_hash = subprocess.run(
+        ["git", "-C", str(target_repo), "log", "-1", "--format=%H", branch_name],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    message = subprocess.run(
+        ["git", "-C", str(target_repo), "log", "-1", "--format=%s", branch_name],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    match = re.search(r"score:\s*([-\d.eE+]+)", message)
+    score = float(match.group(1)) if match else None
+    return (commit_hash, score)
+
+
+def _delete_branches(target_repo: Path, pattern: str):
+    output = subprocess.run(
+        ["git", "-C", str(target_repo), "branch", "--list", pattern],
+        capture_output=True, text=True,
+    ).stdout.strip()
+    for line in output.splitlines():
+        name = line.strip().removeprefix("* ")
+        if name:
+            subprocess.run(
+                ["git", "-C", str(target_repo), "branch", "-D", name],
+                capture_output=True,
+            )
 
 
 def _create_worktree(target_repo: Path, worktree_path: Path, commit: str):
@@ -140,13 +257,14 @@ def _run_eval(eval_command: str, worktree_path: Path) -> tuple[str, str]:
         return "", str(exc)
 
 
-def _write_header(log_path: Path, target_repo: Path, base_commit: str, eval_command: str, num_iterations: int):
+def _write_header(log_path: Path, target_repo: Path, base_commit: str, eval_command: str, num_iterations: int, eval_strategy: str):
     with open(log_path, "w", encoding="utf-8") as f:
         f.write("# Experiment Log\n\n")
         f.write(f"- **Started**: {datetime.now().isoformat()}\n")
         f.write(f"- **Target Repo**: `{target_repo}`\n")
         f.write(f"- **Base Commit**: `{base_commit}`\n")
         f.write(f"- **Iterations**: {num_iterations}\n")
+        f.write(f"- **Eval Strategy**: {eval_strategy}\n")
         f.write(f"- **Eval Command**: `{eval_command}`\n\n")
 
 
@@ -167,11 +285,13 @@ def _append_iteration(log_path: Path, result: dict):
         f.write("\n---\n\n")
 
 
-def _append_summary(log_path: Path, results: list[dict]):
+def _append_summary(log_path: Path, results: list[dict], best_result: dict | None = None):
     with open(log_path, "a", encoding="utf-8") as f:
         f.write("## Summary\n\n")
         f.write("| Iteration | Status | Eval Score | Duration |\n")
         f.write("|-----------|--------|------------|----------|\n")
         for r in results:
             f.write(f"| {r['iteration']} | {r['status']} | {r['eval_score']} | {r['codex_duration_s']}s |\n")
+        if best_result:
+            f.write(f"\n- **Best Iteration**: {best_result['iteration']} (score: {best_result.get('parsed_score', 'N/A')})\n")
         f.write(f"\n- **Completed**: {datetime.now().isoformat()}\n")
