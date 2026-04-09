@@ -61,7 +61,7 @@ def run_experiment_loop(
         session_log = None
         start_time = time.time()
         try:
-            session_result = run_codex_session(cwd=worktree_path, instruction=instruction)
+            session_result = run_codex_session(cwd=worktree_path, instruction=instruction, role="experiment")
             codex_response = session_result.turn_result.response_text
             session_log = session_result.session_log_path
             print(f"Codex done. Session log: {session_log}")
@@ -113,6 +113,10 @@ def _create_worktree(target_repo: Path, worktree_path: Path, commit: str):
             ["git", "-C", str(target_repo), "worktree", "remove", "--force", str(worktree_path)],
             capture_output=True,
         )
+    subprocess.run(
+        ["git", "-C", str(target_repo), "worktree", "prune"],
+        capture_output=True,
+    )
     subprocess.run(
         ["git", "-C", str(target_repo), "worktree", "add", "--detach", str(worktree_path), commit],
         capture_output=True, text=True, check=True,
