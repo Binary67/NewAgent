@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Callable, Mapping
 
 from .Agent import CodexAgent, CodexTurnResult
 
@@ -44,6 +44,8 @@ def run_codex_session(
     codex_executable: str | None = None,
     logs_root: Path | str | None = None,
     environment: Mapping[str, str] | None = None,
+    dynamic_tools: list[dict[str, Any]] | None = None,
+    tool_handler: Callable[[str, Any], dict[str, Any]] | None = None,
 ) -> CodexSessionRunResult:
     preamble = _load_instructions(role)
     full_instruction = f"{preamble}\n\n{instruction}" if preamble else instruction
@@ -52,9 +54,10 @@ def run_codex_session(
         codex_executable=codex_executable,
         logs_root=logs_root,
         environment=environment,
+        tool_handler=tool_handler,
     )
     try:
-        agent.start_session(str(cwd))
+        agent.start_session(str(cwd), dynamic_tools=dynamic_tools)
         turn_result = agent.run_instruction(full_instruction)
         session_log_path = agent.session_log_path
         agent.end_session()

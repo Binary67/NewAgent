@@ -93,6 +93,15 @@ class CodexSessionLog:
 
         return self._append_sections(self.path_for_thread(thread_id), sections)
 
+    def append_tool_call(self, thread_id: str, tool_name: str, success: bool, result_text: str) -> Path:
+        sections: list[tuple[str, str]] = [
+            ("Tool Call", tool_name),
+            ("Tool Success", str(success)),
+        ]
+        if result_text.strip():
+            sections.append(self._multi_line_section("Tool Result", result_text))
+        return self._append_sections(self.path_for_thread(thread_id), sections)
+
     def append_turn_finished(self, thread_id: str, turn: TurnLogEntry, status: str) -> Path:
         work_summary = f"Ran {len(turn.commands)} command(s)."
         sections: list[tuple[str, str]] = [

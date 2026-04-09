@@ -7,7 +7,7 @@ import sys
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from .SessionLog import (
     CodexSessionLog,
@@ -186,6 +186,7 @@ class CodexAgent:
         client_version: str = "0.1.0",
         logs_root: Path | str | None = None,
         environment: Mapping[str, str] | None = None,
+        tool_handler: Callable[[str, Any], dict[str, Any]] | None = None,
     ) -> None:
         self._codex_executable = codex_executable or self._resolve_codex_executable()
         self._client_name = client_name
@@ -193,6 +194,7 @@ class CodexAgent:
         self._client_version = client_version
         self._session_log = CodexSessionLog(logs_root)
         self._environment = dict(environment) if environment is not None else None
+        self._tool_handler = tool_handler
         self._process: subprocess.Popen[str] | None = None
         self._next_request_id = 1
         self._pending_messages: deque[dict[str, Any]] = deque()
@@ -240,21 +242,26 @@ class CodexAgent:
 
         self._notify("initialized", {})
 
-    def start_session(self, cwd: str) -> None:
+    def start_session(
+        self,
+        cwd: str,
+        dynamic_tools: list[dict[str, Any]] | None = None,
+    ) -> None:
         normalized_cwd = self._normalize_cwd(cwd)
         self.start()
 
         if self._thread_id is not None:
             self.end_session()
 
-        result = self._request(
-            "thread/start",
-            {
-                "approvalPolicy": "never",
-                "cwd": normalized_cwd,
-                "sandboxPolicy": {"type": "dangerFullAccess"},
-            },
-        )
+        params: dict[str, Any] = {
+            "approvalPolicy": "never",
+            "cwd": normalized_cwd,
+            "sandboxPolicy": {"type": "dangerFullAccess"},
+        }
+        if dynamic_tools:
+            params["dynamicTools"] = dynamic_tools
+
+        result = self._request("thread/start", params)
 
         self._thread_id = self._extract_thread_id(result, "thread/start")
         self._session_log.append_session_started(self._thread_id, normalized_cwd)
@@ -550,9 +557,45 @@ class CodexAgent:
             self._write_message({"id": message["id"], "result": {"permissions": permissions, "scope": "turn"}})
             return True
 
+        if method == "item/tool/call":
+            params = message.get("params", {})
+            tool_name = params.get("tool", "")
+            arguments = params.get("arguments", {})
+            if self._tool_handler is not None:
+                try:
+                    handler_result = self._tool_handler(tool_name, arguments)
+                    self._write_message({"id": message["id"], "result": handler_result})
+                    self._log_tool_call(tool_name, handler_result)
+                except Exception as exc:
+                    error_result = {
+                        "success": False,
+                        "contentItems": [{"type": "inputText", "text": f"Tool error: {exc}"}],
+                    }
+                    self._write_message({"id": message["id"], "result": error_result})
+                    self._log_tool_call(tool_name, error_result)
+            else:
+                no_handler_result = {
+                    "success": False,
+                    "contentItems": [{"type": "inputText", "text": f"No handler for tool: {tool_name}"}],
+                }
+                self._write_message({"id": message["id"], "result": no_handler_result})
+                self._log_tool_call(tool_name, no_handler_result)
+            return True
+
         raise self.build_error(
             f"Codex requested client-side handling for {method}, which this wrapper does not support."
         )
+
+    def _log_tool_call(self, tool_name: str, result: dict[str, Any]) -> None:
+        thread_id = self._thread_id
+        if thread_id is None:
+            return
+        success = result.get("success", False)
+        content_items = result.get("contentItems", [])
+        result_text = "\n".join(
+            item.get("text", "") for item in content_items if isinstance(item, dict)
+        )
+        self._session_log.append_tool_call(thread_id, tool_name, success, result_text)
 
     def _require_process(self) -> subprocess.Popen[str]:
         if self._process is None:

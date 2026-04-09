@@ -1,14 +1,30 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from Agents.Codex import run_codex_session
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+
+HIDDEN_EVAL_TOOL = {
+    "name": "run_hidden_eval",
+    "description": (
+        "Run the hidden evaluation on your current changes. "
+        "Returns a score and comparison against the baseline. "
+        "You have a limited number of calls -- use them wisely."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": False,
+    },
+}
 
 
 def run_experiment_loop(
@@ -16,10 +32,15 @@ def run_experiment_loop(
     eval_command: str,
     role: str = "experiment",
     num_iterations: int = 5,
+    max_eval_calls: int = 3,
     eval_strategy: str = "maximize",
+    eval_repo: str | Path = "",
+    eval_overrides: list[str] | None = None,
 ):
     maximize = eval_strategy == "maximize"
     target_repo = Path(target_repo).resolve()
+    eval_repo_path = Path(eval_repo).resolve() if eval_repo else None
+    eval_overrides = eval_overrides or []
     worktree_dir = PROJECT_ROOT / "Worktrees"
     logs_dir = PROJECT_ROOT / "Logs"
     worktree_dir.mkdir(parents=True, exist_ok=True)
@@ -45,22 +66,113 @@ def run_experiment_loop(
         print(f"  Iteration {i} / {num_iterations}")
         print(f"{'=' * 60}")
 
-        worktree_path = worktree_dir / f"iteration_{i:03d}"
+        agent_worktree = worktree_dir / f"iteration_{i:03d}_agent"
+        eval_worktree = worktree_dir / f"iteration_{i:03d}_eval"
 
         try:
-            _create_worktree(target_repo, worktree_path, base_commit)
+            _create_worktree(target_repo, agent_worktree, base_commit)
+            _create_worktree(target_repo, eval_worktree, base_commit)
         except subprocess.CalledProcessError as exc:
             print(f"Worktree creation failed: {exc}")
-            result = _make_result(i, worktree_path, status="worktree_error", error=str(exc))
+            result = _make_result(i, agent_worktree, status="worktree_error", error=str(exc))
             results.append(result)
             _append_iteration(experiment_log, result)
             continue
 
-        print(f"Worktree ready: {worktree_path}")
+        if eval_repo_path:
+            _apply_eval_overrides(eval_repo_path, eval_worktree, eval_overrides)
+
+        print(f"Agent worktree ready: {agent_worktree}")
+        print(f"Eval worktree ready:  {eval_worktree}")
+
+        baseline_stdout, baseline_error = _run_eval(eval_command, eval_worktree)
+        baseline_score = _parse_score(baseline_stdout) if not baseline_error else None
+        if baseline_score is not None:
+            print(f"Baseline score: {baseline_score}")
+        else:
+            print(f"Baseline eval failed: {baseline_error or 'unparseable output'}")
+
+        eval_state: dict[str, Any] = {
+            "remaining": max_eval_calls,
+            "baseline_score": baseline_score,
+            "trials": [],
+        }
+
+        def eval_handler(tool_name: str, arguments: Any) -> dict[str, Any]:
+            if tool_name != "run_hidden_eval":
+                return {
+                    "success": False,
+                    "contentItems": [{"type": "inputText", "text": f"Unknown tool: {tool_name}"}],
+                }
+
+            if eval_state["remaining"] <= 0:
+                return {
+                    "success": True,
+                    "contentItems": [{"type": "inputText", "text": (
+                        "=== EVALUATION UNAVAILABLE ===\n"
+                        "You have used all your eval opportunities.\n"
+                        "Continue refining based on your best judgment."
+                    )}],
+                }
+
+            commit_hash = _snapshot_worktree(agent_worktree, len(eval_state["trials"]) + 1)
+            _sync_eval_worktree(eval_worktree, commit_hash)
+            if eval_repo_path:
+                _apply_eval_overrides(eval_repo_path, eval_worktree, eval_overrides)
+            score_stdout, score_error = _run_eval(eval_command, eval_worktree)
+
+            if score_error:
+                return {
+                    "success": False,
+                    "contentItems": [{"type": "inputText", "text": f"Evaluation error: {score_error}"}],
+                }
+
+            parsed = _parse_score(score_stdout)
+            if parsed is None:
+                return {
+                    "success": False,
+                    "contentItems": [{"type": "inputText", "text": f"Could not parse score from eval output:\n{score_stdout}"}],
+                }
+
+            eval_state["remaining"] -= 1
+            eval_state["trials"].append({"commit": commit_hash, "score": parsed})
+
+            trial_scores = [t["score"] for t in eval_state["trials"]]
+            best_so_far = (max if maximize else min)(trial_scores)
+
+            bl = eval_state["baseline_score"]
+            if bl is not None:
+                diff = parsed - bl
+                direction = "BETTER" if (diff > 0 if maximize else diff < 0) else "WORSE"
+                diff_str = f"{diff:+.6f}"
+                comparison_line = f"Comparison: {direction} ({diff_str} from baseline)"
+            else:
+                comparison_line = "Comparison: No baseline available"
+
+            if bl is not None and (parsed > bl if maximize else parsed < bl):
+                recommendation = "Your changes improved the score. You may stop here."
+            else:
+                recommendation = "Your changes did not improve the score. Analyze why and try a different approach."
+
+            feedback = (
+                f"=== EVALUATION RESULT ===\n"
+                f"Score: {parsed}\n"
+                f"Baseline: {bl if bl is not None else 'N/A'}\n"
+                f"Best so far: {best_so_far}\n"
+                f"{comparison_line}\n"
+                f"Remaining eval opportunities: {eval_state['remaining']}\n"
+                f"RECOMMENDATION: {recommendation}"
+            )
+            print(f"  [Eval trial {len(eval_state['trials'])}] Score: {parsed} ({comparison_line})")
+
+            return {
+                "success": True,
+                "contentItems": [{"type": "inputText", "text": feedback}],
+            }
 
         instruction = (
             f"IMPORTANT: You must only create or modify files within your current "
-            f"working directory ({worktree_path}). "
+            f"working directory ({agent_worktree}). "
             f"Do not access, read, or modify any files outside this directory."
         )
 
@@ -69,7 +181,13 @@ def run_experiment_loop(
         session_log = None
         start_time = time.time()
         try:
-            session_result = run_codex_session(cwd=worktree_path, instruction=instruction, role=role)
+            session_result = run_codex_session(
+                cwd=agent_worktree,
+                instruction=instruction,
+                role=role,
+                dynamic_tools=[HIDDEN_EVAL_TOOL],
+                tool_handler=eval_handler,
+            )
             codex_response = session_result.turn_result.response_text
             session_log = session_result.session_log_path
             print(f"Codex done. Session log: {session_log}")
@@ -79,36 +197,41 @@ def run_experiment_loop(
             print(f"Codex failed: {exc}")
         codex_duration = round(time.time() - start_time, 1)
 
-        eval_score, eval_error = _run_eval(eval_command, worktree_path)
-        print(f"Eval score: {eval_score}")
+        trials = eval_state["trials"]
+        best_trial = None
+        if trials:
+            best_trial = (max if maximize else min)(trials, key=lambda t: t["score"])
 
-        status = "codex_error" if codex_failed else ("eval_error" if eval_error else "completed")
+        best_score_str = str(best_trial["score"]) if best_trial else ""
+        status = "codex_error" if codex_failed else "completed"
 
         result = _make_result(
-            i, worktree_path,
+            i, agent_worktree,
             session_log=str(session_log) if session_log else None,
             codex_response=codex_response,
-            eval_score=eval_score,
+            eval_score=best_score_str,
             codex_duration_s=codex_duration,
             status=status,
-            error=eval_error,
+            error="" if not codex_failed else codex_response,
+            trials=trials,
         )
 
-        if status == "completed":
-            parsed = _parse_score(eval_score)
-            if parsed is not None:
-                try:
-                    commit_hash = _commit_and_branch(target_repo, worktree_path, i, parsed)
-                    result["commit_hash"] = commit_hash
-                    result["parsed_score"] = parsed
-                    print(f"Saved to branch: experiment/iter_{i:03d}")
-                except Exception as exc:
-                    print(f"Warning: failed to save branch for iteration {i}: {exc}")
+        if best_trial:
+            result["commit_hash"] = best_trial["commit"]
+            result["parsed_score"] = best_trial["score"]
+            try:
+                subprocess.run(
+                    ["git", "-C", str(target_repo), "branch",
+                     f"experiment/iter_{i:03d}", best_trial["commit"]],
+                    capture_output=True, text=True, check=True,
+                )
+                print(f"Saved best trial to branch: experiment/iter_{i:03d} (score: {best_trial['score']})")
+            except Exception as exc:
+                print(f"Warning: failed to save branch for iteration {i}: {exc}")
 
         results.append(result)
         _append_iteration(experiment_log, result)
 
-    # Determine best iteration and save best branch
     completed_results = [r for r in results if r.get("parsed_score") is not None]
     best_result = None
 
@@ -142,6 +265,22 @@ def run_experiment_loop(
     return results
 
 
+def _snapshot_worktree(worktree_path: Path, trial_number: int) -> str:
+    subprocess.run(
+        ["git", "-C", str(worktree_path), "add", "-A"],
+        capture_output=True, check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(worktree_path), "commit", "--allow-empty", "-m",
+         f"Trial {trial_number} snapshot"],
+        capture_output=True, text=True, check=True,
+    )
+    return subprocess.run(
+        ["git", "-C", str(worktree_path), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+
 def _make_result(iteration, worktree_path, **kwargs):
     return {
         "iteration": iteration,
@@ -165,27 +304,6 @@ def _parse_score(eval_score_str: str) -> float | None:
     except ValueError:
         return None
 
-
-def _commit_and_branch(target_repo: Path, worktree_path: Path, iteration: int, score: float) -> str:
-    subprocess.run(
-        ["git", "-C", str(worktree_path), "add", "-A"],
-        capture_output=True, check=True,
-    )
-    subprocess.run(
-        ["git", "-C", str(worktree_path), "commit", "-m",
-         f"Experiment iteration {iteration} - score: {score}"],
-        capture_output=True, text=True, check=True,
-    )
-    commit_hash = subprocess.run(
-        ["git", "-C", str(worktree_path), "rev-parse", "HEAD"],
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
-    subprocess.run(
-        ["git", "-C", str(target_repo), "branch",
-         f"experiment/iter_{iteration:03d}", commit_hash],
-        capture_output=True, text=True, check=True,
-    )
-    return commit_hash
 
 
 def _get_best_branch_info(target_repo: Path) -> tuple[str, float | None]:
@@ -239,13 +357,35 @@ def _create_worktree(target_repo: Path, worktree_path: Path, commit: str):
     )
 
 
-def _run_eval(eval_command: str, worktree_path: Path) -> tuple[str, str]:
+def _sync_eval_worktree(eval_worktree: Path, commit_hash: str) -> None:
+    subprocess.run(
+        ["git", "-C", str(eval_worktree), "checkout", commit_hash, "--", "."],
+        capture_output=True, text=True, check=True,
+    )
+
+
+def _apply_eval_overrides(eval_repo: Path, eval_worktree: Path, overrides: list[str]) -> None:
+    for pattern in overrides:
+        matches = list(eval_repo.glob(pattern))
+        if not matches:
+            print(f"  Warning: eval_overrides pattern '{pattern}' matched no files in {eval_repo}")
+        for src in matches:
+            if not src.is_file():
+                continue
+            rel = src.relative_to(eval_repo)
+            dst = eval_worktree / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+
+
+def _run_eval(eval_command: str, eval_worktree: Path) -> tuple[str, str]:
     """Returns (score_stdout, error_string). error_string is empty on success."""
-    command = eval_command.replace("{worktree}", str(worktree_path))
+    command = eval_command.replace("{worktree}", str(eval_worktree))
+    command = command.replace("{eval_worktree}", str(eval_worktree))
     try:
         result = subprocess.run(
             command, shell=True, capture_output=True, text=True,
-            timeout=300, cwd=str(worktree_path),
+            timeout=300, cwd=str(eval_worktree),
         )
         if result.returncode == 0:
             return result.stdout.strip(), ""

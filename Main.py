@@ -17,4 +17,7 @@ run_experiment_loop(
     eval_strategy=experiment["eval_strategy"],
     role=experiment["role"],
     num_iterations=experiment["num_iterations"],
+    max_eval_calls=experiment.get("max_eval_calls", 3),
+    eval_repo=experiment["eval_repo"],
+    eval_overrides=experiment["eval_overrides"],
 )

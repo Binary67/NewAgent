@@ -1,6 +1,9 @@
 [Experiment]
 target_repo = "D:/HousePricePrediction"
-eval_command = "uv run D:/HiddenEval/evaluation.py"
+eval_command = "uv run {eval_worktree}/evaluation.py"
 eval_strategy = "maximize"
 num_iterations = 1
+max_eval_calls = 3
 role = "experiment"
+eval_repo = "D:/HiddenEval"
+eval_overrides = ["Data.csv", "evaluation.py"]
