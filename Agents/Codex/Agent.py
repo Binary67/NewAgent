@@ -1,0 +1,614 @@
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import sys
+from collections import deque
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Mapping
+
+from .SessionLog import (
+    CodexSessionLog,
+    CommandLogEntry,
+    FileChangeLogEntry,
+    TurnLogEntry,
+)
+
+
+class CodexAgentError(RuntimeError):
+    """Raised when the Codex app-server session cannot complete a request."""
+
+    def __init__(self, message: str, session_log_path: Path | None = None) -> None:
+        super().__init__(message)
+        self.session_log_path = session_log_path
+
+
+@dataclass(frozen=True)
+class CodexTurnResult:
+    response_text: str
+    commands: list[CommandLogEntry] = field(default_factory=list)
+    file_changes: list[FileChangeLogEntry] = field(default_factory=list)
+    errors_and_recoveries: list[str] = field(default_factory=list)
+
+
+@dataclass
+class _CommandLogState:
+    command: str = ""
+    status: str | None = None
+    exit_code: int | None = None
+    duration_ms: int | None = None
+    output: str = ""
+
+    def update_from_item(self, item: dict[str, Any]) -> None:
+        command = item.get("command")
+        if isinstance(command, str) and command:
+            self.command = command
+
+        status = item.get("status")
+        if isinstance(status, str) and status:
+            self.status = status
+
+        exit_code = item.get("exitCode")
+        if isinstance(exit_code, int):
+            self.exit_code = exit_code
+
+        duration_ms = item.get("durationMs")
+        if isinstance(duration_ms, int):
+            self.duration_ms = duration_ms
+
+        aggregated_output = item.get("aggregatedOutput")
+        if isinstance(aggregated_output, str) and aggregated_output:
+            self.output = aggregated_output
+
+    def append_output(self, value: str) -> None:
+        if value:
+            self.output += value
+
+    def to_entry(self) -> CommandLogEntry:
+        return CommandLogEntry(
+            command=self.command or "(unknown command)",
+            status=self.status,
+            exit_code=self.exit_code,
+            duration_ms=self.duration_ms,
+            output=self.output,
+        )
+
+
+@dataclass
+class _FileChangeState:
+    changes: list[dict[str, str | None]] = field(default_factory=list)
+    output: str = ""
+    status: str | None = None
+
+    def update_from_item(self, item: dict[str, Any]) -> None:
+        status = item.get("status")
+        if isinstance(status, str) and status:
+            self.status = status
+
+        raw_changes = item.get("changes")
+        if not isinstance(raw_changes, list):
+            return
+
+        changes: list[dict[str, str | None]] = []
+        for raw_change in raw_changes:
+            if not isinstance(raw_change, dict):
+                continue
+
+            path = raw_change.get("path")
+            kind = raw_change.get("kind")
+            diff = raw_change.get("diff")
+            if not isinstance(path, str) or not path:
+                continue
+
+            changes.append(
+                {
+                    "path": path,
+                    "kind": kind if isinstance(kind, str) and kind else None,
+                    "diff": diff if isinstance(diff, str) else None,
+                }
+            )
+
+        if changes:
+            self.changes = changes
+
+    def append_output(self, value: str) -> None:
+        if value:
+            self.output += value
+
+    def to_entries(self) -> list[FileChangeLogEntry]:
+        if not self.changes:
+            return []
+
+        entries: list[FileChangeLogEntry] = []
+        for change in self.changes:
+            diff = change["diff"] or ""
+            if not diff and self.output.strip():
+                diff = self.output
+
+            entries.append(
+                FileChangeLogEntry(
+                    path=change["path"] or "(unknown file)",
+                    kind=change["kind"],
+                    diff=diff,
+                )
+            )
+        return entries
+
+
+@dataclass
+class _TurnLogCollector:
+    user_request: str
+    command_states: dict[str, _CommandLogState] = field(default_factory=dict)
+    file_change_states: dict[str, _FileChangeState] = field(default_factory=dict)
+    errors_and_recoveries: list[str] = field(default_factory=list)
+
+    def note_error(self, message: str) -> None:
+        if message and message not in self.errors_and_recoveries:
+            self.errors_and_recoveries.append(message)
+
+    def command_state(self, item_id: str) -> _CommandLogState:
+        state = self.command_states.get(item_id)
+        if state is None:
+            state = _CommandLogState()
+            self.command_states[item_id] = state
+        return state
+
+    def file_change_state(self, item_id: str) -> _FileChangeState:
+        state = self.file_change_states.get(item_id)
+        if state is None:
+            state = _FileChangeState()
+            self.file_change_states[item_id] = state
+        return state
+
+    def to_entry(self, codex_response: str) -> TurnLogEntry:
+        commands = [state.to_entry() for state in self.command_states.values()]
+        file_changes: list[FileChangeLogEntry] = []
+        for state in self.file_change_states.values():
+            file_changes.extend(state.to_entries())
+
+        return TurnLogEntry(
+            user_request=self.user_request,
+            codex_response=codex_response,
+            commands=commands,
+            file_changes=file_changes,
+            errors_and_recoveries=self.errors_and_recoveries.copy(),
+        )
+
+
+class CodexAgent:
+    def __init__(
+        self,
+        codex_executable: str | None = None,
+        client_name: str = "newagent",
+        client_title: str = "NewAgent",
+        client_version: str = "0.1.0",
+        logs_root: Path | str | None = None,
+        environment: Mapping[str, str] | None = None,
+    ) -> None:
+        self._codex_executable = codex_executable or self._resolve_codex_executable()
+        self._client_name = client_name
+        self._client_title = client_title
+        self._client_version = client_version
+        self._session_log = CodexSessionLog(logs_root)
+        self._environment = dict(environment) if environment is not None else None
+        self._process: subprocess.Popen[str] | None = None
+        self._next_request_id = 1
+        self._pending_messages: deque[dict[str, Any]] = deque()
+        self._thread_id: str | None = None
+
+    @property
+    def thread_id(self) -> str | None:
+        return self._thread_id
+
+    @property
+    def session_log_path(self) -> Path | None:
+        if self._thread_id is None:
+            return None
+        return self._session_log.path_for_thread(self._thread_id)
+
+    def start(self) -> None:
+        if self._process is not None and self._process.poll() is None:
+            return
+
+        self._process = subprocess.Popen(
+            [self._codex_executable, "app-server"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            env=self._environment,
+        )
+
+        initialize_result = self._request(
+            "initialize",
+            {
+                "clientInfo": {
+                    "name": self._client_name,
+                    "title": self._client_title,
+                    "version": self._client_version,
+                },
+                "capabilities": {"experimentalApi": True},
+            },
+        )
+        if not isinstance(initialize_result, dict):
+            raise CodexAgentError("Codex app-server returned an invalid initialize response.")
+
+        self._notify("initialized", {})
+
+    def start_session(self, cwd: str) -> None:
+        normalized_cwd = self._normalize_cwd(cwd)
+        self.start()
+
+        if self._thread_id is not None:
+            self.end_session()
+
+        result = self._request(
+            "thread/start",
+            {
+                "approvalPolicy": "never",
+                "cwd": normalized_cwd,
+                "sandboxPolicy": {"type": "dangerFullAccess"},
+            },
+        )
+
+        self._thread_id = self._extract_thread_id(result, "thread/start")
+        self._session_log.append_session_started(self._thread_id, normalized_cwd)
+
+    def end_session(self) -> None:
+        if self._thread_id is None:
+            return
+
+        thread_id = self._thread_id
+        self._thread_id = None
+        self._request("thread/unsubscribe", {"threadId": thread_id})
+
+    def run_instruction(self, instruction: str) -> CodexTurnResult:
+        if not instruction or not instruction.strip():
+            raise ValueError("instruction must be a non-empty string.")
+        if self._thread_id is None:
+            raise CodexAgentError("Codex session is not started. Call start_session(cwd) before run_instruction().")
+
+        turn_result = self._request(
+            "turn/start",
+            {
+                "threadId": self._require_thread_id(),
+                "input": [{"type": "text", "text": instruction}],
+            },
+        )
+        turn_id = self._extract_turn_id(turn_result)
+        return self._consume_turn(turn_id, instruction)
+
+    def close(self) -> None:
+        if self._process is None:
+            return
+
+        process = self._process
+        self._process = None
+        self._pending_messages.clear()
+        self._thread_id = None
+
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+
+        if process.stdin is not None:
+            process.stdin.close()
+        if process.stdout is not None:
+            process.stdout.close()
+
+    def build_error(self, message: str) -> CodexAgentError:
+        return CodexAgentError(message, self.session_log_path)
+
+    def _consume_turn(self, expected_turn_id: str, instruction: str) -> CodexTurnResult:
+        message_buffers: dict[str, str] = {}
+        last_message_text = ""
+        final_answer_text: str | None = None
+        collector = _TurnLogCollector(user_request=instruction)
+        last_logged_response: str | None = None
+        did_finish_log = False
+        thread_id = self._require_thread_id()
+        self._session_log.append_turn_started(thread_id, instruction)
+
+        def build_turn_result(response_text: str) -> CodexTurnResult:
+            turn_entry = collector.to_entry(response_text)
+            return CodexTurnResult(
+                response_text=turn_entry.codex_response,
+                commands=turn_entry.commands,
+                file_changes=turn_entry.file_changes,
+                errors_and_recoveries=turn_entry.errors_and_recoveries,
+            )
+
+        def append_response_snapshot(response_text: str) -> None:
+            nonlocal last_logged_response
+            if not response_text:
+                return
+            if response_text == last_logged_response:
+                return
+            self._session_log.append_response_snapshot(thread_id, response_text)
+            last_logged_response = response_text
+
+        def finalize_turn_log(
+            response_text: str,
+            status: str,
+            error_message: str | None = None,
+        ) -> CodexTurnResult:
+            nonlocal did_finish_log
+            if error_message:
+                collector.note_error(error_message)
+            result = build_turn_result(response_text)
+            if did_finish_log:
+                return result
+            append_response_snapshot(result.response_text or "(no final response)")
+            self._session_log.append_turn_finished(
+                thread_id,
+                TurnLogEntry(
+                    user_request=instruction,
+                    codex_response=result.response_text,
+                    commands=result.commands,
+                    file_changes=result.file_changes,
+                    errors_and_recoveries=result.errors_and_recoveries,
+                ),
+                status,
+            )
+            did_finish_log = True
+            return result
+
+        try:
+            while True:
+                message = self._read_message()
+                if self._handle_server_request(message):
+                    continue
+                self._raise_for_server_request(message)
+
+                if "id" in message:
+                    raise CodexAgentError(f"Unexpected JSON-RPC response while waiting for turn events: {message!r}")
+
+                method = message.get("method")
+                params = message.get("params", {})
+
+                if method == "item/started":
+                    item = params.get("item", {})
+                    item_id = item.get("id")
+                    item_type = item.get("type")
+                    if isinstance(item_id, str) and item_id:
+                        if item_type == "commandExecution":
+                            collector.command_state(item_id).update_from_item(item)
+                        elif item_type == "fileChange":
+                            collector.file_change_state(item_id).update_from_item(item)
+                    continue
+
+                if method == "item/agentMessage/delta":
+                    item_id = params["itemId"]
+                    message_buffers[item_id] = message_buffers.get(item_id, "") + params["delta"]
+                    last_message_text = message_buffers[item_id]
+                    continue
+
+                if method == "item/fileChange/outputDelta":
+                    item_id = params.get("itemId")
+                    output_text = self._extract_delta_text(params)
+                    if isinstance(item_id, str) and output_text:
+                        collector.file_change_state(item_id).append_output(output_text)
+                    continue
+
+                if method == "item/commandExecution/outputDelta":
+                    item_id = params.get("itemId")
+                    output_text = self._extract_delta_text(params)
+                    if isinstance(item_id, str) and output_text:
+                        collector.command_state(item_id).append_output(output_text)
+                    continue
+
+                if method == "item/completed":
+                    item = params.get("item", {})
+                    if item.get("type") == "agentMessage":
+                        text = item.get("text", "")
+                        item_id = item.get("id")
+                        if item_id:
+                            message_buffers[item_id] = text
+                        last_message_text = text
+                        append_response_snapshot(text)
+                        if item.get("phase") == "final_answer":
+                            final_answer_text = text
+                    elif item.get("type") == "commandExecution":
+                        item_id = item.get("id")
+                        if isinstance(item_id, str) and item_id:
+                            command_state = collector.command_state(item_id)
+                            command_state.update_from_item(item)
+                            if command_state.status in {"failed", "declined"}:
+                                error_message = (
+                                    f"Command `{command_state.command or '(unknown command)'}` ended with status "
+                                    f"{command_state.status}"
+                                )
+                                if command_state.exit_code is not None:
+                                    error_message = f"{error_message} (exit_code={command_state.exit_code})"
+                                collector.note_error(f"{error_message}.")
+                            self._session_log.append_command_completed(thread_id, command_state.to_entry())
+                    elif item.get("type") == "fileChange":
+                        item_id = item.get("id")
+                        if isinstance(item_id, str) and item_id:
+                            file_change_state = collector.file_change_state(item_id)
+                            file_change_state.update_from_item(item)
+                            if file_change_state.status in {"failed", "declined"}:
+                                collector.note_error(f"File change item ended with status {file_change_state.status}.")
+                    continue
+
+                if method == "turn/completed":
+                    turn = params.get("turn", {})
+                    turn_id = turn.get("id")
+                    if turn_id != expected_turn_id:
+                        self._pending_messages.append(message)
+                        continue
+
+                    status = turn.get("status")
+                    if status == "failed":
+                        error = turn.get("error") or {}
+                        error_message = error.get("message", "Codex turn failed.")
+                        finalize_turn_log(final_answer_text or last_message_text, "failed", error_message)
+                        raise self.build_error(error_message)
+                    if status == "interrupted":
+                        error_message = "Codex turn was interrupted."
+                        finalize_turn_log(final_answer_text or last_message_text, "interrupted", error_message)
+                        raise self.build_error(error_message)
+                    if status != "completed":
+                        error_message = f"Unexpected Codex turn status: {status!r}"
+                        finalize_turn_log(final_answer_text or last_message_text, f"unexpected:{status!r}", error_message)
+                        raise self.build_error(error_message)
+                    response_text = final_answer_text or last_message_text
+                    return finalize_turn_log(response_text, "completed")
+        except Exception as exc:
+            finalize_turn_log(final_answer_text or last_message_text, "failed", str(exc))
+            raise
+
+    def _request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        request_id = self._next_request_id
+        self._next_request_id += 1
+        self._write_message({"method": method, "id": request_id, "params": params})
+        deferred_messages: list[dict[str, Any]] = []
+
+        while True:
+            message = self._read_message()
+            self._raise_for_server_request(message)
+
+            if message.get("id") != request_id:
+                deferred_messages.append(message)
+                continue
+
+            if "error" in message:
+                error = message["error"]
+                raise self.build_error(error.get("message", f"Codex request failed for {method}."))
+            if "result" not in message:
+                raise self.build_error(f"Codex response for {method} did not include a result.")
+            if deferred_messages:
+                self._pending_messages.extendleft(reversed(deferred_messages))
+            return message["result"]
+
+    def _notify(self, method: str, params: dict[str, Any]) -> None:
+        self._write_message({"method": method, "params": params})
+
+    def _write_message(self, message: dict[str, Any]) -> None:
+        process = self._require_process()
+        if process.stdin is None:
+            raise self.build_error("Codex app-server stdin is not available.")
+
+        process.stdin.write(json.dumps(message) + "\n")
+        process.stdin.flush()
+
+    def _read_message(self) -> dict[str, Any]:
+        if self._pending_messages:
+            return self._pending_messages.popleft()
+
+        process = self._require_process()
+        if process.stdout is None:
+            raise self.build_error("Codex app-server stdout is not available.")
+
+        line = process.stdout.readline()
+        if line == "":
+            exit_code = process.poll()
+            raise self.build_error(
+                "Codex app-server closed the connection unexpectedly."
+                if exit_code is None
+                else f"Codex app-server exited unexpectedly with code {exit_code}."
+            )
+
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise self.build_error(f"Codex app-server returned invalid JSON: {line!r}") from exc
+
+        if not isinstance(payload, dict):
+            raise self.build_error(f"Codex app-server returned an unexpected message: {payload!r}")
+        return payload
+
+    def _extract_turn_id(self, result: dict[str, Any]) -> str:
+        try:
+            return result["turn"]["id"]
+        except (KeyError, TypeError) as exc:
+            raise self.build_error("Codex app-server returned an invalid turn/start response.") from exc
+
+    def _extract_thread_id(self, result: dict[str, Any], operation: str) -> str:
+        try:
+            return result["thread"]["id"]
+        except (KeyError, TypeError) as exc:
+            raise self.build_error(f"Codex app-server returned an invalid {operation} response.") from exc
+
+    def _normalize_cwd(self, cwd: str | None) -> str | None:
+        if cwd is None:
+            return None
+
+        candidate = Path(cwd).expanduser()
+        if not candidate.exists():
+            raise ValueError(f"cwd does not exist: {cwd}")
+        if not candidate.is_dir():
+            raise ValueError(f"cwd is not a directory: {cwd}")
+        return str(candidate.resolve())
+
+    def _raise_for_server_request(self, message: dict[str, Any]) -> None:
+        if "method" in message and "id" in message and "result" not in message and "error" not in message:
+            raise self.build_error(
+                f"Codex requested client-side handling for {message['method']}, which this wrapper does not support."
+            )
+
+    def _handle_server_request(self, message: dict[str, Any]) -> bool:
+        if "method" not in message or "id" not in message or "result" in message or "error" in message:
+            return False
+
+        method = message["method"]
+
+        if method in ("item/fileChange/requestApproval", "item/commandExecution/requestApproval"):
+            self._write_message({"id": message["id"], "result": {"decision": "accept"}})
+            return True
+
+        if method == "item/permissions/requestApproval":
+            params = message.get("params", {})
+            permissions = params.get("permissions", {})
+            self._write_message({"id": message["id"], "result": {"permissions": permissions, "scope": "turn"}})
+            return True
+
+        return False
+
+    def _require_process(self) -> subprocess.Popen[str]:
+        if self._process is None:
+            raise self.build_error("Codex agent is not started.")
+        return self._process
+
+    def _resolve_codex_executable(self) -> str:
+        if sys.platform.startswith("win"):
+            return shutil.which("codex.cmd") or shutil.which("codex") or "codex"
+        return shutil.which("codex") or "codex"
+
+    def _require_thread_id(self) -> str:
+        if self._thread_id is None:
+            raise self.build_error("Codex thread is not initialized.")
+        return self._thread_id
+
+    def _extract_delta_text(self, params: dict[str, Any]) -> str:
+        preferred_keys = ("delta", "output", "text")
+        for key in preferred_keys:
+            value = params.get(key)
+            if isinstance(value, str) and value:
+                return value
+
+        content = params.get("content")
+        if isinstance(content, str) and content:
+            return content
+        if isinstance(content, (dict, list)):
+            return json.dumps(content, ensure_ascii=False, indent=2)
+
+        values: list[str] = []
+        for key, value in params.items():
+            if key in {"itemId", "threadId", "turnId"}:
+                continue
+            if isinstance(value, str) and value:
+                values.append(value)
+            elif isinstance(value, (dict, list)):
+                values.append(json.dumps(value, ensure_ascii=False, indent=2))
+
+        return "\n".join(values).strip()
