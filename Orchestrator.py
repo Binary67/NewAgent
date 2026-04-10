@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import time
@@ -13,6 +14,7 @@ from Agents.Codex import run_codex_session
 PROJECT_ROOT = Path(__file__).resolve().parent
 BEST_BRANCH = "best/current"
 BEST_STATE_PATH = PROJECT_ROOT / "BestState.json"
+DEPENDENCY_FILES = ("pyproject.toml", "uv.lock")
 
 HIDDEN_EVAL_TOOL = {
     "name": "run_hidden_eval",
@@ -98,6 +100,42 @@ def run_experiment_loop(
         print(f"Agent worktree ready: {agent_worktree}")
         print(f"Eval worktree ready:  {eval_worktree}")
 
+        agent_sync_ok, agent_sync_error = _sync_worktree_environment(
+            agent_worktree,
+            action="Prewarming agent worktree environment",
+        )
+        if not agent_sync_ok:
+            print(agent_sync_error)
+            result = _make_result(
+                i,
+                agent_worktree,
+                base_commit=base_commit,
+                status="setup_error",
+                error=agent_sync_error,
+            )
+            results.append(result)
+            _append_iteration(experiment_log, result)
+            continue
+
+        eval_sync_ok, eval_sync_error = _sync_worktree_environment(
+            eval_worktree,
+            action="Prewarming eval worktree environment",
+        )
+        if not eval_sync_ok:
+            print(eval_sync_error)
+            result = _make_result(
+                i,
+                agent_worktree,
+                base_commit=base_commit,
+                status="setup_error",
+                error=eval_sync_error,
+            )
+            results.append(result)
+            _append_iteration(experiment_log, result)
+            continue
+
+        eval_dependency_state = _get_dependency_state(eval_worktree)
+
         baseline_stdout, baseline_error = _run_eval(eval_command, eval_worktree)
         baseline_score = _parse_score(baseline_stdout) if not baseline_error else None
         if baseline_score is not None:
@@ -109,6 +147,7 @@ def run_experiment_loop(
             "remaining": max_eval_calls,
             "baseline_score": baseline_score,
             "trials": [],
+            "dependency_state": eval_dependency_state,
         }
 
         def eval_handler(tool_name: str, arguments: Any) -> dict[str, Any]:
@@ -132,6 +171,17 @@ def run_experiment_loop(
             _sync_eval_worktree(eval_worktree, commit_hash)
             if eval_repo_path:
                 _apply_eval_overrides(eval_repo_path, eval_worktree, eval_overrides)
+            sync_ok, sync_error, dependency_state = _sync_eval_worktree_dependencies_if_needed(
+                eval_worktree,
+                eval_state["dependency_state"],
+            )
+            if not sync_ok:
+                return {
+                    "success": False,
+                    "contentItems": [{"type": "inputText", "text": f"Evaluation error: {sync_error}"}],
+                }
+
+            eval_state["dependency_state"] = dependency_state
             score_stdout, score_error = _run_eval(eval_command, eval_worktree)
 
             if score_error:
@@ -528,6 +578,71 @@ def _create_worktree(target_repo: Path, worktree_path: Path, commit: str):
         text=True,
         check=True,
     )
+
+
+def _build_uv_environment() -> dict[str, str]:
+    environment = dict(os.environ)
+    environment["UV_LINK_MODE"] = "copy"
+    for key in ("VIRTUAL_ENV", "PYTHONHOME", "__PYVENV_LAUNCHER__"):
+        environment.pop(key, None)
+    return environment
+
+
+def _sync_worktree_environment(worktree_path: Path, *, action: str) -> tuple[bool, str]:
+    print(f"{action}: {worktree_path}")
+    try:
+        result = subprocess.run(
+            ["uv", "sync", "--frozen"],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            cwd=str(worktree_path),
+            env=_build_uv_environment(),
+        )
+    except subprocess.TimeoutExpired:
+        return (False, f"{action} failed for {worktree_path}: TIMEOUT")
+    except Exception as exc:
+        return (False, f"{action} failed for {worktree_path}: {exc}")
+
+    if result.returncode == 0:
+        print(f"{action} complete: {worktree_path}")
+        return (True, "")
+
+    details = "\n".join(part for part in (result.stdout.strip(), result.stderr.strip()) if part)
+    suffix = f":\n{details}" if details else ""
+    return (False, f"{action} failed for {worktree_path} (exit {result.returncode}){suffix}")
+
+
+def _get_dependency_state(worktree_path: Path) -> tuple[tuple[str, bool, int, int], ...]:
+    state: list[tuple[str, bool, int, int]] = []
+    for name in DEPENDENCY_FILES:
+        path = worktree_path / name
+        if not path.exists():
+            state.append((name, False, -1, -1))
+            continue
+        stat = path.stat()
+        state.append((name, True, stat.st_size, stat.st_mtime_ns))
+    return tuple(state)
+
+
+def _sync_eval_worktree_dependencies_if_needed(
+    eval_worktree: Path,
+    previous_state: tuple[tuple[str, bool, int, int], ...],
+) -> tuple[bool, str, tuple[tuple[str, bool, int, int], ...]]:
+    current_state = _get_dependency_state(eval_worktree)
+    if current_state == previous_state:
+        print(f"Eval dependency files unchanged; skipping uv sync: {eval_worktree}")
+        return (True, "", previous_state)
+
+    print(f"Eval dependency files changed; re-syncing environment: {eval_worktree}")
+    sync_ok, sync_error = _sync_worktree_environment(
+        eval_worktree,
+        action="Re-syncing eval worktree dependencies",
+    )
+    if not sync_ok:
+        return (False, sync_error, previous_state)
+
+    return (True, "", _get_dependency_state(eval_worktree))
 
 
 def _sync_eval_worktree(eval_worktree: Path, commit_hash: str) -> None:

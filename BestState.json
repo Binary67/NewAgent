@@ -1,0 +1,8 @@
+{
+  "target_repo": "D:\\HousePricePrediction",
+  "best_branch": "best/current",
+  "best_commit": "3208379188df7387723f2863a7220245cb9f12e4",
+  "best_score": -0.05830146924096735,
+  "eval_strategy": "maximize",
+  "updated_at": "2026-04-10T20:53:55.615056"
+}
