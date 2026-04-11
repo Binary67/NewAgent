@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from Agents.Codex import run_codex_session
+from Agents.Codex import CodexSession
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 BEST_BRANCH = "best/current"
@@ -18,8 +18,8 @@ BEST_STATE_PATH = PROJECT_ROOT / "BestState.json"
 HIDDEN_EVAL_TOOL = {
     "name": "run_hidden_eval",
     "description": (
-        "Run the hidden evaluation on your current changes. "
-        "Returns a score and comparison against the baseline. "
+        "Request the hidden evaluation for your current changes. "
+        "The orchestrator will run it after this turn and send the result in the next message. "
         "You have a limited number of calls -- use them wisely."
     ),
     "inputSchema": {
@@ -153,6 +153,8 @@ def run_experiment_loop(
             "baseline_score": baseline_score,
             "trials": [],
             "prewarm_state": eval_prewarm_state,
+            "pending_request": None,
+            "requested_this_turn": False,
         }
 
         def eval_handler(tool_name: str, arguments: Any) -> dict[str, Any]:
@@ -172,72 +174,40 @@ def run_experiment_loop(
                     )}],
                 }
 
-            commit_hash = _snapshot_worktree(agent_worktree, len(eval_state["trials"]) + 1)
-            _sync_eval_worktree(eval_worktree, commit_hash)
-            if eval_repo_path:
-                _apply_eval_overrides(eval_repo_path, eval_worktree, eval_overrides)
-            prewarm_ok, prewarm_error, prewarm_state = _sync_eval_worktree_prewarm_if_needed(
-                eval_worktree,
-                prewarm_command,
-                prewarm_watch_files,
-                eval_state["prewarm_state"],
-            )
-            if not prewarm_ok:
+            if eval_state["requested_this_turn"]:
                 return {
-                    "success": False,
-                    "contentItems": [{"type": "inputText", "text": f"Evaluation error: {prewarm_error}"}],
+                    "success": True,
+                    "contentItems": [{"type": "inputText", "text": (
+                        "=== EVALUATION ALREADY REQUESTED ===\n"
+                        "You already requested an evaluation in this turn.\n"
+                        "Do not make further edits or request another eval.\n"
+                        "End this turn and wait for the next message with the result."
+                    )}],
                 }
 
-            eval_state["prewarm_state"] = prewarm_state
-            score_stdout, score_error = _run_eval(eval_command, eval_worktree)
-
-            if score_error:
+            trial_number = len(eval_state["trials"]) + 1
+            try:
+                commit_hash = _snapshot_worktree(agent_worktree, trial_number)
+            except Exception as exc:
                 return {
                     "success": False,
-                    "contentItems": [{"type": "inputText", "text": f"Evaluation error: {score_error}"}],
+                    "contentItems": [{"type": "inputText", "text": f"Evaluation request failed: {exc}"}],
                 }
 
-            parsed = _parse_score(score_stdout)
-            if parsed is None:
-                return {
-                    "success": False,
-                    "contentItems": [{"type": "inputText", "text": f"Could not parse score from eval output:\n{score_stdout}"}],
-                }
-
-            eval_state["remaining"] -= 1
-            eval_state["trials"].append({"commit": commit_hash, "score": parsed})
-
-            trial_scores = [t["score"] for t in eval_state["trials"]]
-            best_so_far = (max if maximize else min)(trial_scores)
-
-            bl = eval_state["baseline_score"]
-            if bl is not None:
-                diff = parsed - bl
-                direction = "BETTER" if (diff > 0 if maximize else diff < 0) else "WORSE"
-                diff_str = f"{diff:+.6f}"
-                comparison_line = f"Comparison: {direction} ({diff_str} from baseline)"
-            else:
-                comparison_line = "Comparison: No baseline available"
-
-            if bl is not None and _is_better(parsed, bl, maximize):
-                recommendation = "Your changes improved the score. You may stop here."
-            else:
-                recommendation = "Your changes did not improve the score. Analyze why and try a different approach."
-
-            feedback = (
-                f"=== EVALUATION RESULT ===\n"
-                f"Score: {parsed}\n"
-                f"Baseline: {bl if bl is not None else 'N/A'}\n"
-                f"Best so far: {best_so_far}\n"
-                f"{comparison_line}\n"
-                f"Remaining eval opportunities: {eval_state['remaining']}\n"
-                f"RECOMMENDATION: {recommendation}"
-            )
-            print(f"  [Eval trial {len(eval_state['trials'])}] Score: {parsed} ({comparison_line})")
+            eval_state["requested_this_turn"] = True
+            eval_state["pending_request"] = {
+                "commit": commit_hash,
+            }
+            print(f"  [Eval requested] Trial {trial_number}: {commit_hash}")
 
             return {
                 "success": True,
-                "contentItems": [{"type": "inputText", "text": feedback}],
+                "contentItems": [{"type": "inputText", "text": (
+                    "=== EVALUATION REQUESTED ===\n"
+                    f"Snapshot: {commit_hash}\n"
+                    "The orchestrator will run the hidden evaluation after this turn.\n"
+                    "Stop editing, do not request another eval in this turn, and wait for the next message with the result."
+                )}],
             }
 
         instruction = (
@@ -251,15 +221,37 @@ def run_experiment_loop(
         session_log = None
         start_time = time.time()
         try:
-            session_result = run_codex_session(
+            with CodexSession(
                 cwd=agent_worktree,
-                instruction=instruction,
                 role=role,
                 dynamic_tools=[HIDDEN_EVAL_TOOL],
                 tool_handler=eval_handler,
-            )
-            codex_response = session_result.turn_result.response_text
-            session_log = session_result.session_log_path
+            ) as session:
+                session_log = session.session_log_path
+                turn_input = instruction
+                while True:
+                    eval_state["pending_request"] = None
+                    eval_state["requested_this_turn"] = False
+                    turn_result = session.run_turn(turn_input)
+                    codex_response = turn_result.response_text
+                    session_log = session.session_log_path
+
+                    pending_request = eval_state["pending_request"]
+                    if pending_request is None:
+                        break
+
+                    eval_feedback = _run_requested_eval(
+                        eval_command,
+                        eval_worktree,
+                        eval_repo_path,
+                        eval_overrides,
+                        prewarm_command,
+                        prewarm_watch_files,
+                        eval_state,
+                        pending_request,
+                        maximize,
+                    )
+                    turn_input = _build_eval_followup_message(pending_request["commit"], eval_feedback)
             print(f"Codex done. Session log: {session_log}")
         except Exception as exc:
             codex_failed = True
@@ -685,6 +677,84 @@ def _apply_eval_overrides(eval_repo: Path, eval_worktree: Path, overrides: list[
             shutil.copy2(src, dst)
 
 
+def _run_requested_eval(
+    eval_command: str,
+    eval_worktree: Path,
+    eval_repo_path: Path | None,
+    eval_overrides: list[str],
+    prewarm_command: str,
+    prewarm_watch_files: list[str],
+    eval_state: dict[str, Any],
+    pending_request: dict[str, Any],
+    maximize: bool,
+) -> str:
+    commit_hash = pending_request["commit"]
+    try:
+        _sync_eval_worktree(eval_worktree, commit_hash)
+        if eval_repo_path:
+            _apply_eval_overrides(eval_repo_path, eval_worktree, eval_overrides)
+
+        prewarm_ok, prewarm_error, prewarm_state = _sync_eval_worktree_prewarm_if_needed(
+            eval_worktree,
+            prewarm_command,
+            prewarm_watch_files,
+            eval_state["prewarm_state"],
+        )
+        if not prewarm_ok:
+            return f"Evaluation error: {prewarm_error}"
+
+        eval_state["prewarm_state"] = prewarm_state
+        score_stdout, score_error = _run_eval(eval_command, eval_worktree)
+        if score_error:
+            return f"Evaluation error: {score_error}"
+
+        parsed = _parse_score(score_stdout)
+        if parsed is None:
+            return f"Could not parse score from eval output:\n{score_stdout}"
+
+        eval_state["remaining"] -= 1
+        eval_state["trials"].append({"commit": commit_hash, "score": parsed})
+
+        trial_scores = [trial["score"] for trial in eval_state["trials"]]
+        best_so_far = (max if maximize else min)(trial_scores)
+
+        baseline_score = eval_state["baseline_score"]
+        if baseline_score is not None:
+            diff = parsed - baseline_score
+            direction = "BETTER" if (diff > 0 if maximize else diff < 0) else "WORSE"
+            diff_str = f"{diff:+.6f}"
+            comparison_line = f"Comparison: {direction} ({diff_str} from baseline)"
+        else:
+            comparison_line = "Comparison: No baseline available"
+
+        if baseline_score is not None and _is_better(parsed, baseline_score, maximize):
+            recommendation = "Your changes improved the score. You may stop here."
+        else:
+            recommendation = "Your changes did not improve the score. Analyze why and try a different approach."
+
+        print(f"  [Eval trial {len(eval_state['trials'])}] Score: {parsed} ({comparison_line})")
+        return (
+            f"=== EVALUATION RESULT ===\n"
+            f"Score: {parsed}\n"
+            f"Baseline: {baseline_score if baseline_score is not None else 'N/A'}\n"
+            f"Best so far: {best_so_far}\n"
+            f"{comparison_line}\n"
+            f"Remaining eval opportunities: {eval_state['remaining']}\n"
+            f"RECOMMENDATION: {recommendation}"
+        )
+    except Exception as exc:
+        return f"Evaluation error: {exc}"
+
+
+def _build_eval_followup_message(commit_hash: str, eval_feedback: str) -> str:
+    return (
+        f"Evaluation finished for snapshot {commit_hash}.\n\n"
+        f"{eval_feedback}\n\n"
+        "Continue from this result. Use another evaluation only after you complete a new hypothesis, "
+        "then call `run_hidden_eval` once and end your turn."
+    )
+
+
 def _run_eval(eval_command: str, eval_worktree: Path) -> tuple[str, str]:
     """Returns (score_stdout, error_string). error_string is empty on success."""
     command = eval_command.replace("{worktree}", str(eval_worktree))
@@ -695,14 +765,11 @@ def _run_eval(eval_command: str, eval_worktree: Path) -> tuple[str, str]:
             shell=True,
             capture_output=True,
             text=True,
-            timeout=300,
             cwd=str(eval_worktree),
         )
         if result.returncode == 0:
             return result.stdout.strip(), ""
         return "", f"exit {result.returncode}: {result.stderr.strip()}"
-    except subprocess.TimeoutExpired:
-        return "", "TIMEOUT"
     except Exception as exc:
         return "", str(exc)
 

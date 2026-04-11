@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -9,12 +8,6 @@ from .Agent import CodexAgent, CodexTurnResult
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 PROMPTS_DIR = PROJECT_ROOT / "Prompts"
-
-
-@dataclass(frozen=True)
-class CodexSessionRunResult:
-    turn_result: CodexTurnResult
-    session_log_path: Path | None
 
 
 def _load_instructions(role: str | None) -> str:
@@ -72,33 +65,48 @@ def _build_session_environment(environment: Mapping[str, str] | None) -> dict[st
     return session_environment
 
 
-def run_codex_session(
-    cwd: Path,
-    instruction: str,
-    *,
-    role: str | None = None,
-    codex_executable: str | None = None,
-    logs_root: Path | str | None = None,
-    environment: Mapping[str, str] | None = None,
-    dynamic_tools: list[dict[str, Any]] | None = None,
-    tool_handler: Callable[[str, Any], dict[str, Any]] | None = None,
-) -> CodexSessionRunResult:
-    preamble = _load_instructions(role)
-    full_instruction = f"{preamble}\n\n{instruction}" if preamble else instruction
-    session_environment = _build_session_environment(environment)
+class CodexSession:
+    def __init__(
+        self,
+        cwd: Path,
+        *,
+        role: str | None = None,
+        codex_executable: str | None = None,
+        logs_root: Path | str | None = None,
+        environment: Mapping[str, str] | None = None,
+        dynamic_tools: list[dict[str, Any]] | None = None,
+        tool_handler: Callable[[str, Any], dict[str, Any]] | None = None,
+    ) -> None:
+        self._cwd = Path(cwd)
+        self._preamble = _load_instructions(role)
+        self._agent = CodexAgent(
+            codex_executable=codex_executable,
+            logs_root=logs_root,
+            environment=_build_session_environment(environment),
+            tool_handler=tool_handler,
+        )
+        try:
+            self._agent.start_session(str(self._cwd), dynamic_tools=dynamic_tools)
+        except Exception:
+            self._agent.close()
+            raise
 
-    agent = CodexAgent(
-        codex_executable=codex_executable,
-        logs_root=logs_root,
-        environment=session_environment,
-        tool_handler=tool_handler,
-    )
-    try:
-        agent.start_session(str(cwd), dynamic_tools=dynamic_tools)
-        turn_result = agent.run_instruction(full_instruction)
-        session_log_path = agent.session_log_path
-        agent.end_session()
-    finally:
-        agent.close()
+    @property
+    def session_log_path(self) -> Path | None:
+        return self._agent.session_log_path
 
-    return CodexSessionRunResult(turn_result=turn_result, session_log_path=session_log_path)
+    def run_turn(self, text: str) -> CodexTurnResult:
+        full_instruction = f"{self._preamble}\n\n{text}" if self._preamble else text
+        return self._agent.run_instruction(full_instruction)
+
+    def close(self) -> None:
+        try:
+            self._agent.end_session()
+        finally:
+            self._agent.close()
+
+    def __enter__(self) -> CodexSession:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
