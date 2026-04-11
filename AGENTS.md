@@ -10,3 +10,6 @@
   - prompts or pipelines tailored only to Python, JavaScript, or any other single language
   - language-specific heuristics presented as universal behavior
 - When proposing or implementing changes, preserve NextResearcher's role as a general-purpose system that should work on any type of problem regardless of programming language.
+
+### No test file is needed
+- You are not required to write an unit tests

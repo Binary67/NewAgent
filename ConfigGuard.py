@@ -14,6 +14,9 @@ max_eval_calls = 3
 role = "experiment"
 eval_repo = "D:/HiddenEval"
 eval_overrides = ["Data.csv", "evaluation.py"]
+# Optional repo-specific prewarm.
+# prewarm_command = "uv sync --frozen"
+# prewarm_watch_files = ["pyproject.toml", "uv.lock"]
 """
 
 DEFAULT_PROMPTS = {

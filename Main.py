@@ -20,4 +20,6 @@ run_experiment_loop(
     max_eval_calls=experiment.get("max_eval_calls", 3),
     eval_repo=experiment["eval_repo"],
     eval_overrides=experiment["eval_overrides"],
+    prewarm_command=experiment.get("prewarm_command", ""),
+    prewarm_watch_files=experiment.get("prewarm_watch_files", []),
 )

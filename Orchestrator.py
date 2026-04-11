@@ -14,7 +14,6 @@ from Agents.Codex import run_codex_session
 PROJECT_ROOT = Path(__file__).resolve().parent
 BEST_BRANCH = "best/current"
 BEST_STATE_PATH = PROJECT_ROOT / "BestState.json"
-DEPENDENCY_FILES = ("pyproject.toml", "uv.lock")
 
 HIDDEN_EVAL_TOOL = {
     "name": "run_hidden_eval",
@@ -40,11 +39,14 @@ def run_experiment_loop(
     eval_strategy: str = "maximize",
     eval_repo: str | Path = "",
     eval_overrides: list[str] | None = None,
+    prewarm_command: str = "",
+    prewarm_watch_files: list[str] | None = None,
 ):
     maximize = eval_strategy == "maximize"
     target_repo = Path(target_repo).resolve()
     eval_repo_path = Path(eval_repo).resolve() if eval_repo else None
     eval_overrides = eval_overrides or []
+    prewarm_watch_files = prewarm_watch_files or []
     worktree_dir = PROJECT_ROOT / "Worktrees"
     logs_dir = PROJECT_ROOT / "Logs"
     worktree_dir.mkdir(parents=True, exist_ok=True)
@@ -100,41 +102,44 @@ def run_experiment_loop(
         print(f"Agent worktree ready: {agent_worktree}")
         print(f"Eval worktree ready:  {eval_worktree}")
 
-        agent_sync_ok, agent_sync_error = _sync_worktree_environment(
-            agent_worktree,
-            action="Prewarming agent worktree environment",
-        )
-        if not agent_sync_ok:
-            print(agent_sync_error)
-            result = _make_result(
-                i,
+        if prewarm_command:
+            agent_prewarm_ok, agent_prewarm_error = _run_prewarm_command(
                 agent_worktree,
-                base_commit=base_commit,
-                status="setup_error",
-                error=agent_sync_error,
+                prewarm_command,
+                action="Prewarming agent worktree",
             )
-            results.append(result)
-            _append_iteration(experiment_log, result)
-            continue
+            if not agent_prewarm_ok:
+                print(agent_prewarm_error)
+                result = _make_result(
+                    i,
+                    agent_worktree,
+                    base_commit=base_commit,
+                    status="setup_error",
+                    error=agent_prewarm_error,
+                )
+                results.append(result)
+                _append_iteration(experiment_log, result)
+                continue
 
-        eval_sync_ok, eval_sync_error = _sync_worktree_environment(
-            eval_worktree,
-            action="Prewarming eval worktree environment",
-        )
-        if not eval_sync_ok:
-            print(eval_sync_error)
-            result = _make_result(
-                i,
-                agent_worktree,
-                base_commit=base_commit,
-                status="setup_error",
-                error=eval_sync_error,
+            eval_prewarm_ok, eval_prewarm_error = _run_prewarm_command(
+                eval_worktree,
+                prewarm_command,
+                action="Prewarming eval worktree",
             )
-            results.append(result)
-            _append_iteration(experiment_log, result)
-            continue
+            if not eval_prewarm_ok:
+                print(eval_prewarm_error)
+                result = _make_result(
+                    i,
+                    agent_worktree,
+                    base_commit=base_commit,
+                    status="setup_error",
+                    error=eval_prewarm_error,
+                )
+                results.append(result)
+                _append_iteration(experiment_log, result)
+                continue
 
-        eval_dependency_state = _get_dependency_state(eval_worktree)
+        eval_prewarm_state = _get_prewarm_watch_state(eval_worktree, prewarm_watch_files)
 
         baseline_stdout, baseline_error = _run_eval(eval_command, eval_worktree)
         baseline_score = _parse_score(baseline_stdout) if not baseline_error else None
@@ -147,7 +152,7 @@ def run_experiment_loop(
             "remaining": max_eval_calls,
             "baseline_score": baseline_score,
             "trials": [],
-            "dependency_state": eval_dependency_state,
+            "prewarm_state": eval_prewarm_state,
         }
 
         def eval_handler(tool_name: str, arguments: Any) -> dict[str, Any]:
@@ -171,17 +176,19 @@ def run_experiment_loop(
             _sync_eval_worktree(eval_worktree, commit_hash)
             if eval_repo_path:
                 _apply_eval_overrides(eval_repo_path, eval_worktree, eval_overrides)
-            sync_ok, sync_error, dependency_state = _sync_eval_worktree_dependencies_if_needed(
+            prewarm_ok, prewarm_error, prewarm_state = _sync_eval_worktree_prewarm_if_needed(
                 eval_worktree,
-                eval_state["dependency_state"],
+                prewarm_command,
+                prewarm_watch_files,
+                eval_state["prewarm_state"],
             )
-            if not sync_ok:
+            if not prewarm_ok:
                 return {
                     "success": False,
-                    "contentItems": [{"type": "inputText", "text": f"Evaluation error: {sync_error}"}],
+                    "contentItems": [{"type": "inputText", "text": f"Evaluation error: {prewarm_error}"}],
                 }
 
-            eval_state["dependency_state"] = dependency_state
+            eval_state["prewarm_state"] = prewarm_state
             score_stdout, score_error = _run_eval(eval_command, eval_worktree)
 
             if score_error:
@@ -580,24 +587,24 @@ def _create_worktree(target_repo: Path, worktree_path: Path, commit: str):
     )
 
 
-def _build_uv_environment() -> dict[str, str]:
+def _build_prewarm_environment() -> dict[str, str]:
     environment = dict(os.environ)
-    environment["UV_LINK_MODE"] = "copy"
     for key in ("VIRTUAL_ENV", "PYTHONHOME", "__PYVENV_LAUNCHER__"):
         environment.pop(key, None)
     return environment
 
 
-def _sync_worktree_environment(worktree_path: Path, *, action: str) -> tuple[bool, str]:
+def _run_prewarm_command(worktree_path: Path, prewarm_command: str, *, action: str) -> tuple[bool, str]:
     print(f"{action}: {worktree_path}")
     try:
         result = subprocess.run(
-            ["uv", "sync", "--frozen"],
+            prewarm_command,
+            shell=True,
             capture_output=True,
             text=True,
             timeout=300,
             cwd=str(worktree_path),
-            env=_build_uv_environment(),
+            env=_build_prewarm_environment(),
         )
     except subprocess.TimeoutExpired:
         return (False, f"{action} failed for {worktree_path}: TIMEOUT")
@@ -613,36 +620,46 @@ def _sync_worktree_environment(worktree_path: Path, *, action: str) -> tuple[boo
     return (False, f"{action} failed for {worktree_path} (exit {result.returncode}){suffix}")
 
 
-def _get_dependency_state(worktree_path: Path) -> tuple[tuple[str, bool, int, int], ...]:
+def _get_prewarm_watch_state(worktree_path: Path, prewarm_watch_files: list[str]) -> tuple[tuple[str, bool, int, int], ...]:
     state: list[tuple[str, bool, int, int]] = []
-    for name in DEPENDENCY_FILES:
-        path = worktree_path / name
+    for relative_path in prewarm_watch_files:
+        path = worktree_path / relative_path
         if not path.exists():
-            state.append((name, False, -1, -1))
+            state.append((relative_path, False, -1, -1))
             continue
         stat = path.stat()
-        state.append((name, True, stat.st_size, stat.st_mtime_ns))
+        state.append((relative_path, True, stat.st_size, stat.st_mtime_ns))
     return tuple(state)
 
 
-def _sync_eval_worktree_dependencies_if_needed(
+def _sync_eval_worktree_prewarm_if_needed(
     eval_worktree: Path,
+    prewarm_command: str,
+    prewarm_watch_files: list[str],
     previous_state: tuple[tuple[str, bool, int, int], ...],
 ) -> tuple[bool, str, tuple[tuple[str, bool, int, int], ...]]:
-    current_state = _get_dependency_state(eval_worktree)
-    if current_state == previous_state:
-        print(f"Eval dependency files unchanged; skipping uv sync: {eval_worktree}")
+    if not prewarm_command:
         return (True, "", previous_state)
 
-    print(f"Eval dependency files changed; re-syncing environment: {eval_worktree}")
-    sync_ok, sync_error = _sync_worktree_environment(
-        eval_worktree,
-        action="Re-syncing eval worktree dependencies",
-    )
-    if not sync_ok:
-        return (False, sync_error, previous_state)
+    if not prewarm_watch_files:
+        print(f"No prewarm watch files configured; skipping eval prewarm check: {eval_worktree}")
+        return (True, "", previous_state)
 
-    return (True, "", _get_dependency_state(eval_worktree))
+    current_state = _get_prewarm_watch_state(eval_worktree, prewarm_watch_files)
+    if current_state == previous_state:
+        print(f"Eval prewarm watch files unchanged; skipping prewarm: {eval_worktree}")
+        return (True, "", previous_state)
+
+    print(f"Eval prewarm watch files changed; rerunning prewarm: {eval_worktree}")
+    prewarm_ok, prewarm_error = _run_prewarm_command(
+        eval_worktree,
+        prewarm_command,
+        action="Rewarming eval worktree",
+    )
+    if not prewarm_ok:
+        return (False, prewarm_error, previous_state)
+
+    return (True, "", _get_prewarm_watch_state(eval_worktree, prewarm_watch_files))
 
 
 def _sync_eval_worktree(eval_worktree: Path, commit_hash: str) -> None:
