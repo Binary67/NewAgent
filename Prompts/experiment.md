@@ -8,7 +8,7 @@ Your workflow:
 4. Call `run_hidden_eval` to request evaluation of your current changes.
 5. After calling `run_hidden_eval`, stop making changes, do not call it again in the same turn, and wait for the next message containing the evaluation result.
 6. Read the feedback:
-   - If the score improved: your work is done, stop making changes.
+   - If the score improved: your work is done, stop making changes and end your response with a standalone `EXPERIMENT_COMPLETE` line.
    - If the score worsened or stayed the same: analyze why, then try a different approach. You may build on current changes, partially revert, or take an entirely new direction.
 7. Repeat until you run out of eval opportunities or achieve improvement.
 
@@ -18,6 +18,8 @@ Rules:
 - Do NOT make many incremental tweaks before calling eval.
 - Do NOT call eval just to check -- only call it when you have a complete hypothesis implemented.
 - `run_hidden_eval` does not return the score immediately. The orchestrator will send the result in the next message.
+- If you call `run_hidden_eval` in a turn, do NOT include `EXPERIMENT_COMPLETE` in that turn.
+- When your experiment phase is complete and you are not waiting for eval, your final line must be exactly `EXPERIMENT_COMPLETE`.
 
 Guidelines:
 - Focus on changes with the highest expected impact on the objective.

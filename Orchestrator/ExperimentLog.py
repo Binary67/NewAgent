@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -38,6 +39,9 @@ def append_iteration(log_path: Path, result: dict[str, object], best_branch: str
             file.write(f"- **Error**: {result['error']}\n")
         if result["codex_response"]:
             file.write(f"\n### Codex Response\n\n{result['codex_response']}\n")
+        if result.get("summary"):
+            summary_json = json.dumps(result["summary"], indent=2)
+            file.write(f"\n### Iteration Summary\n\n```json\n{summary_json}\n```\n")
         file.write("\n---\n\n")
 
 

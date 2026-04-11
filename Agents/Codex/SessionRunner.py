@@ -20,6 +20,13 @@ def _load_instructions(role: str | None) -> str:
         if base:
             parts.append(base)
 
+    if role == "experiment":
+        experiment_memory_path = PROMPTS_DIR / "experiment_memory.md"
+        if experiment_memory_path.exists():
+            experiment_memory = experiment_memory_path.read_text(encoding="utf-8").strip()
+            if experiment_memory:
+                parts.append(experiment_memory)
+
     if role:
         role_path = PROMPTS_DIR / f"{role}.md"
         if role_path.exists():

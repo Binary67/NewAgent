@@ -9,6 +9,7 @@ from Orchestrator.Workspace import delete_branches, prune_worktrees
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = PROJECT_ROOT / "CodexConfig.toml"
+EXPERIMENT_MEMORY_PATH = PROJECT_ROOT / "Prompts" / "experiment_memory.md"
 
 config = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 TARGET_REPO = config["Experiment"]["target_repo"]
@@ -19,6 +20,7 @@ def reset_experiments(target_repo: str | Path | None = None):
     log_count = 0
     branch_count = 0
     metadata_removed = False
+    learning_file_count = 0
 
     worktree_dir = PROJECT_ROOT / "Worktrees"
     if worktree_dir.exists():
@@ -36,6 +38,13 @@ def reset_experiments(target_repo: str | Path | None = None):
         print(f"Cleared {log_count} log file(s) from {logs_dir}")
     else:
         print("No logs to clear.")
+
+    if EXPERIMENT_MEMORY_PATH.exists():
+        EXPERIMENT_MEMORY_PATH.unlink()
+        learning_file_count = 1
+        print(f"Removed experiment memory: {EXPERIMENT_MEMORY_PATH}")
+    else:
+        print("No experiment memory to remove.")
 
     if BEST_STATE_PATH.exists():
         BEST_STATE_PATH.unlink()
@@ -62,7 +71,8 @@ def reset_experiments(target_repo: str | Path | None = None):
     metadata_count = 1 if metadata_removed else 0
     print(
         f"\nReset complete. Removed {worktree_count} worktree(s), {log_count} log file(s), "
-        f"{branch_count} branch(es), {metadata_count} metadata file(s)."
+        f"{branch_count} branch(es), {metadata_count} metadata file(s), "
+        f"{learning_file_count} learning file(s)."
     )
 
 

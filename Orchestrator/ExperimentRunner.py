@@ -22,6 +22,17 @@ from .Evaluation import (
     run_requested_eval,
 )
 from .ExperimentLog import append_iteration, append_summary, write_header
+from .Learning import (
+    build_reflection_request,
+    build_summary_request,
+    choose_reflection_logs,
+    ensure_default_experiment_memory,
+    is_experiment_complete,
+    list_changed_files,
+    parse_experiment_summary,
+    parse_reflection_response,
+    append_iteration_record,
+)
 from .Workspace import create_worktree, delete_branches, get_head_commit
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -61,8 +72,13 @@ def run_experiment_loop(
         current_best_commit = get_head_commit(target_repo)
         print(f"Starting from HEAD: {current_best_commit}")
 
+    run_id = f"{datetime.now():%Y%m%d_%H%M%S}"
     initial_commit = current_best_commit
-    experiment_log = logs_dir / f"experiment_{datetime.now():%Y%m%d_%H%M%S}.md"
+    experiment_log = logs_dir / f"experiment_{run_id}.md"
+    iteration_record_path = logs_dir / f"iteration_records_{run_id}.jsonl"
+    run_reflection_path = logs_dir / f"run_reflection_{run_id}.md"
+    experiment_memory_path = PROJECT_ROOT / "Prompts" / "experiment_memory.md"
+    ensure_default_experiment_memory(experiment_memory_path)
     write_header(experiment_log, target_repo, initial_commit, eval_command, num_iterations, eval_strategy)
 
     results = []
@@ -91,6 +107,7 @@ def run_experiment_loop(
             )
             results.append(result)
             append_iteration(experiment_log, result, BEST_BRANCH)
+            append_iteration_record(iteration_record_path, _build_iteration_record(run_id, result))
             continue
 
         if eval_repo_path:
@@ -116,6 +133,7 @@ def run_experiment_loop(
                 )
                 results.append(result)
                 append_iteration(experiment_log, result, BEST_BRANCH)
+                append_iteration_record(iteration_record_path, _build_iteration_record(run_id, result))
                 continue
 
             eval_prewarm_ok, eval_prewarm_error = run_prewarm_command(
@@ -134,6 +152,7 @@ def run_experiment_loop(
                 )
                 results.append(result)
                 append_iteration(experiment_log, result, BEST_BRANCH)
+                append_iteration_record(iteration_record_path, _build_iteration_record(run_id, result))
                 continue
 
         eval_prewarm_state = get_prewarm_watch_state(eval_worktree, prewarm_watch_files)
@@ -163,7 +182,9 @@ def run_experiment_loop(
 
         codex_response = ""
         codex_failed = False
+        protocol_error = ""
         session_log = None
+        iteration_summary: dict[str, object] | None = None
         start_time = time.time()
         try:
             with CodexSession(
@@ -183,6 +204,36 @@ def run_experiment_loop(
 
                     pending_request = eval_state["pending_request"]
                     if pending_request is None:
+                        if not is_experiment_complete(codex_response):
+                            raise ValueError(
+                                "Experiment turn ended without a standalone EXPERIMENT_COMPLETE marker."
+                            )
+
+                        current_iteration_best_score = None
+                        if eval_state["trials"]:
+                            current_iteration_best_score = (max if maximize else min)(
+                                eval_state["trials"],
+                                key=lambda trial: trial["score"],
+                            )["score"]
+
+                        summary_prompt = build_summary_request(
+                            iteration,
+                            baseline_score,
+                            current_iteration_best_score,
+                            eval_state["remaining"],
+                        )
+                        eval_state["pending_request"] = None
+                        eval_state["requested_this_turn"] = False
+                        summary_turn = session.run_turn(summary_prompt)
+                        if eval_state["pending_request"] is not None:
+                            raise ValueError(
+                                "Summary turn must not request hidden evaluation."
+                            )
+                        if summary_turn.commands or summary_turn.file_changes:
+                            raise ValueError(
+                                "Summary turn must not run commands or modify files."
+                            )
+                        iteration_summary = parse_experiment_summary(summary_turn.response_text)
                         break
 
                     eval_feedback = run_requested_eval(
@@ -198,6 +249,9 @@ def run_experiment_loop(
                     )
                     turn_input = build_eval_followup_message(pending_request["commit"], eval_feedback)
             print(f"Codex done. Session log: {session_log}")
+        except ValueError as exc:
+            protocol_error = str(exc)
+            print(f"Protocol error: {exc}")
         except Exception as exc:
             codex_failed = True
             codex_response = str(exc)
@@ -211,7 +265,12 @@ def run_experiment_loop(
 
         promotion_error = ""
         best_score_str = str(best_trial["score"]) if best_trial else ""
-        status = "codex_error" if codex_failed else "completed"
+        if protocol_error:
+            status = "protocol_error"
+        elif codex_failed:
+            status = "codex_error"
+        else:
+            status = "completed"
 
         result = _make_result(
             iteration,
@@ -222,7 +281,10 @@ def run_experiment_loop(
             eval_score=best_score_str,
             codex_duration_s=codex_duration,
             status=status,
-            error="" if not codex_failed else codex_response,
+            error=protocol_error or ("" if not codex_failed else codex_response),
+            baseline_score=baseline_score,
+            eval_calls_used=len(trials),
+            summary=iteration_summary,
             trials=trials,
             promoted_to_best=False,
         )
@@ -230,6 +292,15 @@ def run_experiment_loop(
         if best_trial:
             result["commit_hash"] = best_trial["commit"]
             result["parsed_score"] = best_trial["score"]
+            try:
+                result["files_changed_best_trial"] = list_changed_files(
+                    target_repo,
+                    base_commit,
+                    best_trial["commit"],
+                )
+            except Exception as exc:
+                print(f"Warning: failed to list changed files for iteration {iteration}: {exc}")
+                result["files_changed_best_trial"] = []
             try:
                 subprocess.run(
                     [
@@ -265,6 +336,7 @@ def run_experiment_loop(
 
         results.append(result)
         append_iteration(experiment_log, result, BEST_BRANCH)
+        append_iteration_record(iteration_record_path, _build_iteration_record(run_id, result))
 
         if promotion_error:
             fatal_error = promotion_error
@@ -281,6 +353,14 @@ def run_experiment_loop(
         print("No successful iterations. Keeping existing best state (if any).")
 
     append_summary(experiment_log, results, best_result, fatal_error=fatal_error)
+    _run_reflection(
+        results,
+        maximize,
+        run_id,
+        iteration_record_path,
+        run_reflection_path,
+        experiment_memory_path,
+    )
 
     if fatal_error:
         print(f"\nExperiment stopped early. Log: {experiment_log}")
@@ -297,9 +377,95 @@ def _make_result(iteration, worktree_path, **kwargs):
         "session_log": None,
         "codex_response": "",
         "eval_score": "",
+        "baseline_score": None,
+        "eval_calls_used": 0,
         "codex_duration_s": 0,
         "status": "completed",
         "error": "",
         "promoted_to_best": False,
+        "summary": None,
+        "files_changed_best_trial": [],
         **kwargs,
     }
+
+
+def _build_iteration_record(run_id: str, result: dict[str, object]) -> dict[str, object]:
+    baseline_score = result.get("baseline_score")
+    best_score = result.get("parsed_score")
+    score_delta = None
+    if isinstance(baseline_score, (int, float)) and isinstance(best_score, (int, float)):
+        score_delta = float(best_score) - float(baseline_score)
+
+    changed_files = result.get("files_changed_best_trial")
+    if not isinstance(changed_files, list):
+        changed_files = []
+
+    return {
+        "run_id": run_id,
+        "iteration": result["iteration"],
+        "status": result["status"],
+        "base_commit": result.get("base_commit") or "",
+        "best_trial_commit": result.get("commit_hash"),
+        "baseline_score": baseline_score,
+        "best_score": best_score,
+        "score_delta": score_delta,
+        "eval_calls_used": result.get("eval_calls_used", 0),
+        "promoted_to_best": result.get("promoted_to_best", False),
+        "files_changed_best_trial": [str(path) for path in changed_files if isinstance(path, str)],
+        "session_log": result.get("session_log"),
+        "summary": result.get("summary"),
+    }
+
+
+def _run_reflection(
+    results: list[dict[str, object]],
+    maximize: bool,
+    run_id: str,
+    iteration_record_path: Path,
+    run_reflection_path: Path,
+    experiment_memory_path: Path,
+) -> None:
+    if not iteration_record_path.exists():
+        run_reflection_path.write_text(
+            _build_reflection_fallback("No iteration records were produced. Experiment memory left unchanged."),
+            encoding="utf-8",
+        )
+        return
+
+    selected_logs = choose_reflection_logs(results, maximize)
+    reflection_request = build_reflection_request(
+        run_id,
+        iteration_record_path,
+        experiment_memory_path,
+        selected_logs,
+    )
+
+    try:
+        with CodexSession(cwd=PROJECT_ROOT, role="reflection") as session:
+            reflection_turn = session.run_turn(reflection_request)
+        run_reflection, experiment_memory = parse_reflection_response(reflection_turn.response_text)
+    except Exception as exc:
+        print(f"Reflection failed: {exc}")
+        run_reflection_path.write_text(
+            _build_reflection_fallback(f"Reflection failed: {exc}. Experiment memory left unchanged."),
+            encoding="utf-8",
+        )
+        return
+
+    run_reflection_path.write_text(f"{run_reflection.rstrip()}\n", encoding="utf-8")
+    experiment_memory_path.write_text(f"{experiment_memory.rstrip()}\n", encoding="utf-8")
+    print(f"Reflection complete. Run reflection: {run_reflection_path}")
+
+
+def _build_reflection_fallback(message: str) -> str:
+    return (
+        "# Run Reflection\n\n"
+        "## Patterns That Helped\n"
+        "- No reflection output was available.\n\n"
+        "## Patterns That Hurt\n"
+        f"- {message}\n\n"
+        "## Unresolved Questions\n"
+        "- Reflection artifacts should be reviewed manually.\n\n"
+        "## Memory Updates Applied\n"
+        "- Experiment memory was left unchanged.\n"
+    )
