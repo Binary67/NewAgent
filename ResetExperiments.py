@@ -9,7 +9,7 @@ from Orchestrator.Workspace import delete_branches, prune_worktrees
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = PROJECT_ROOT / "CodexConfig.toml"
-EXPERIMENT_MEMORY_PATH = PROJECT_ROOT / "Prompts" / "experiment_memory.md"
+EXPERIMENT_MEMORY_PATH = PROJECT_ROOT / "Prompts" / "ExperimentMemory.md"
 
 config = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 TARGET_REPO = config["Experiment"]["target_repo"]

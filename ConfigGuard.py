@@ -4,14 +4,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 PROMPTS_DIR = PROJECT_ROOT / "Prompts"
 
 DEFAULT_PROMPTS = {
-    "base.md": """\
+    "Base.md": """\
 You are a coding agent operating in an automated pipeline.
 - Read and understand existing code before making changes.
 - Make targeted, minimal changes that directly address the task.
 - Do not refactor or reorganize code beyond what is required.
 - If a task is ambiguous, use your best judgement and proceed.
 """,
-    "experiment.md": """\
+    "Experiment.md": """\
 You are conducting an experiment to improve a measurable objective.
 You have access to a `run_hidden_eval` tool that evaluates your changes against a hidden test set.
 
@@ -38,7 +38,7 @@ Guidelines:
 - Keep your changes cohesive — each modification should have a clear rationale tied to the objective.
 - This project uses uv for dependency management. Use `uv add <package>` to install new dependencies and `uv run` to execute Python code.
 """,
-    "eval_setup.md": """\
+    "EvalSetup.md": """\
 You are setting up an evaluator for an automated experiment pipeline.
 
 Your job is to define how the target repo should be scored. You are separate from the experiment agent that will later optimize the target repo.

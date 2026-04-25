@@ -14,21 +14,21 @@ def _load_instructions(role: str | None) -> str:
     """Load base and optional role instructions from Prompts/ directory."""
     parts = []
 
-    base_path = PROMPTS_DIR / "base.md"
+    base_path = PROMPTS_DIR / "Base.md"
     if base_path.exists():
         base = base_path.read_text(encoding="utf-8").strip()
         if base:
             parts.append(base)
 
     if role == "experiment":
-        experiment_memory_path = PROMPTS_DIR / "experiment_memory.md"
+        experiment_memory_path = PROMPTS_DIR / "ExperimentMemory.md"
         if experiment_memory_path.exists():
             experiment_memory = experiment_memory_path.read_text(encoding="utf-8").strip()
             if experiment_memory:
                 parts.append(experiment_memory)
 
     if role:
-        role_path = PROMPTS_DIR / f"{role}.md"
+        role_path = PROMPTS_DIR / f"{''.join(part.capitalize() for part in role.split('_'))}.md"
         if role_path.exists():
             role_text = role_path.read_text(encoding="utf-8").strip()
             if role_text:

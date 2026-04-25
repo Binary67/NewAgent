@@ -77,7 +77,7 @@ def run_experiment_loop(
     experiment_log = logs_dir / f"experiment_{run_id}.md"
     iteration_record_path = logs_dir / f"iteration_records_{run_id}.jsonl"
     run_reflection_path = logs_dir / f"run_reflection_{run_id}.md"
-    experiment_memory_path = PROJECT_ROOT / "Prompts" / "experiment_memory.md"
+    experiment_memory_path = PROJECT_ROOT / "Prompts" / "ExperimentMemory.md"
     ensure_default_experiment_memory(experiment_memory_path)
     write_header(experiment_log, target_repo, initial_commit, eval_command, num_iterations, eval_strategy)
 
