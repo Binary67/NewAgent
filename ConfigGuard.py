@@ -1,23 +1,7 @@
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-CONFIG_PATH = PROJECT_ROOT / "CodexConfig.toml"
 PROMPTS_DIR = PROJECT_ROOT / "Prompts"
-
-DEFAULT_CONFIG = """\
-[Experiment]
-target_repo = "D:/HousePricePrediction"
-eval_command = "uv run {eval_worktree}/evaluation.py"
-eval_strategy = "minimize"
-num_iterations = 1
-max_eval_calls = 3
-role = "experiment"
-eval_repo = "D:/HiddenEval"
-eval_overrides = ["Data.csv", "evaluation.py"]
-# Optional repo-specific prewarm.
-# prewarm_command = "uv sync --frozen"
-# prewarm_watch_files = ["pyproject.toml", "uv.lock"]
-"""
 
 DEFAULT_PROMPTS = {
     "base.md": """\
@@ -54,21 +38,33 @@ Guidelines:
 - Keep your changes cohesive — each modification should have a clear rationale tied to the objective.
 - This project uses uv for dependency management. Use `uv add <package>` to install new dependencies and `uv run` to execute Python code.
 """,
+    "eval_setup.md": """\
+You are setting up an evaluator for an automated experiment pipeline.
+
+Your job is to define how the target repo should be scored. You are separate from the experiment agent that will later optimize the target repo.
+
+Workflow:
+1. Inspect the target repo and the generated evaluation directory paths provided by the orchestrator.
+2. Ask the user clarification questions with `ask_user_clarification` until the desired objective, metric, score direction, data source, and run constraints are clear.
+3. Generate evaluator artifacts only in the generated evaluation directory provided by the orchestrator.
+4. Submit the evaluator setup with `submit_eval_setup`.
+5. If validation fails, fix the evaluator or ask more clarification, then submit again.
+
+Rules:
+- Do not modify the target repo.
+- Do not modify `CodexConfig.toml`.
+- Do not assume what "better" means. Ask the user.
+- Keep the setup language-agnostic. Any command is acceptable if it exits successfully and prints a numeric score on the final non-empty stdout line.
+- Prefer simple evaluator files over speculative framework-specific structure.
+- Do not use argparse or build a command-line interface.
+""",
 }
 
 
-def ensure_codex_config() -> Path:
-    if CONFIG_PATH.exists():
-        print(f"Config found: {CONFIG_PATH}")
-    else:
-        CONFIG_PATH.write_text(DEFAULT_CONFIG, encoding="utf-8")
-        print(f"Generated default config: {CONFIG_PATH}")
-
+def ensure_project_files() -> None:
     PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
     for filename, content in DEFAULT_PROMPTS.items():
         prompt_path = PROMPTS_DIR / filename
         if not prompt_path.exists():
             prompt_path.write_text(content, encoding="utf-8")
             print(f"Generated default prompt: {prompt_path}")
-
-    return CONFIG_PATH

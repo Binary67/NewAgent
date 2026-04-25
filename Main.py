@@ -1,15 +1,8 @@
-import tomllib
-from pathlib import Path
+from ConfigGuard import ensure_project_files
+from Orchestrator import ensure_evaluator_setup, run_experiment_loop
 
-from ConfigGuard import ensure_codex_config
-from Orchestrator import run_experiment_loop
-
-CONFIG_PATH = Path(__file__).resolve().parent / "CodexConfig.toml"
-
-ensure_codex_config()
-
-config = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-experiment = config["Experiment"]
+ensure_project_files()
+experiment = ensure_evaluator_setup()
 
 run_experiment_loop(
     target_repo=experiment["target_repo"],

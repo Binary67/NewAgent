@@ -1,12 +1,9 @@
 [Experiment]
-target_repo = "D:/HousePricePrediction"
-eval_command = "uv run {eval_worktree}/evaluation.py"
+target_repo = "/Users/frank/Desktop/Projects/Kaggle"
+eval_command = "uv run python eval_house_prices_r2.py"
 eval_strategy = "maximize"
 num_iterations = 1
-max_eval_calls = 2
+max_eval_calls = 3
 role = "experiment"
-eval_repo = "D:/HiddenEval"
-eval_overrides = ["Data.csv", "evaluation.py"]
-# Optional repo-specific prewarm.
-# prewarm_command = "uv sync --frozen"
-# prewarm_watch_files = ["pyproject.toml", "uv.lock"]
+eval_repo = "/Users/frank/Desktop/Projects/NextResearcher/GeneratedEvals/Kaggle"
+eval_overrides = ["eval_house_prices_r2.py", "house_prices_train.csv"]
