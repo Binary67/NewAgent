@@ -25,23 +25,26 @@ MAX_SETUP_TURNS = 30
 ASK_USER_CLARIFICATION_TOOL = {
     "name": "ask_user_clarification",
     "description": (
-        "Ask the user focused clarification questions about the desired evaluation objective. "
+        "Ask the user one focused clarification question about the desired evaluation objective. "
         "Use this whenever the objective, metric, data source, score direction, or constraints are unclear."
     ),
     "inputSchema": {
         "type": "object",
         "properties": {
-            "questions": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Focused questions for the user.",
+            "question": {
+                "type": "string",
+                "description": "One focused question for the user.",
+            },
+            "recommendation": {
+                "type": "string",
+                "description": "Recommended answer the user can accept by pressing Enter.",
             },
             "context": {
                 "type": "string",
                 "description": "Optional short context explaining why the questions matter.",
             },
         },
-        "required": ["questions"],
+        "required": ["question", "recommendation"],
         "additionalProperties": False,
     },
 }
@@ -367,12 +370,18 @@ def _config_from_submission(
 
 
 def _handle_user_clarification(arguments: dict[str, Any]) -> dict[str, Any]:
-    raw_questions = arguments.get("questions", [])
-    questions = [str(question).strip() for question in raw_questions if str(question).strip()]
-    if not questions:
+    question = str(arguments.get("question", "")).strip()
+    if not question:
         return {
             "success": False,
-            "contentItems": [{"type": "inputText", "text": "questions must contain at least one question."}],
+            "contentItems": [{"type": "inputText", "text": "question must be a non-empty string."}],
+        }
+
+    recommendation = str(arguments.get("recommendation", "")).strip()
+    if not recommendation:
+        return {
+            "success": False,
+            "contentItems": [{"type": "inputText", "text": "recommendation must be a non-empty string."}],
         }
 
     context = str(arguments.get("context", "")).strip()
@@ -380,18 +389,26 @@ def _handle_user_clarification(arguments: dict[str, Any]) -> dict[str, Any]:
     if context:
         print(context)
 
-    answers = []
-    for index, question in enumerate(questions, start=1):
-        print(f"{index}. {question}")
-        try:
-            answer = input("Answer: ").strip()
-        except EOFError:
-            answer = ""
-        answers.append({"question": question, "answer": answer})
+    print(f"Recommendation: {recommendation}")
+    print(f"Question: {question}")
+    try:
+        answer = input("Answer (press Enter to use recommendation): ").strip()
+    except EOFError:
+        answer = ""
+    if not answer:
+        answer = recommendation
 
     return {
         "success": True,
-        "contentItems": [{"type": "inputText", "text": json.dumps({"answers": answers}, indent=2)}],
+        "contentItems": [
+            {
+                "type": "inputText",
+                "text": json.dumps(
+                    {"question": question, "recommendation": recommendation, "answer": answer},
+                    indent=2,
+                ),
+            }
+        ],
     }
 
 
@@ -412,7 +429,14 @@ def _build_setup_prompt(
         "- You may read the target repo.\n"
         "- You must not modify the target repo or CodexConfig.toml.\n"
         "- Write generated evaluator artifacts only inside the generated evaluation directory.\n"
-        "- Ask the user clarification questions until you understand the desired objective and score direction.\n"
+        "- Ask exactly one clarification question per `ask_user_clarification` call.\n"
+        "- Include a concrete recommendation with every clarification question. The user can press Enter to accept it.\n"
+        "- Do not pre-generate follow-up questions before seeing the previous answer.\n"
+        "- After each answer, update your inferred requirements before deciding whether another question is needed.\n"
+        "- Base each recommendation on the target repo, existing config, and prior user answers. Keep recommendations "
+        "problem-agnostic and language-agnostic.\n"
+        "- Infer obvious score direction for standard metrics when appropriate, such as maximizing R2, but ask if "
+        "direction is ambiguous or the user's intent conflicts with the standard convention.\n"
         "- Submit eval_repo exactly as the generated evaluation directory.\n"
         "- Submit eval_overrides as paths or glob patterns relative to eval_repo.\n"
         "- Submit an eval_command that runs from the eval worktree and prints a numeric score as the final "
