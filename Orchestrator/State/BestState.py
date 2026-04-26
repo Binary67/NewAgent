@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .Workspace import cleanup_stray_best_branches, list_branches, resolve_branch_commit
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 BEST_BRANCH = "best/current"
 BEST_STATE_PATH = PROJECT_ROOT / "BestState.json"
 

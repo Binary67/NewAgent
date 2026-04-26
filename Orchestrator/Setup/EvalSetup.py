@@ -10,10 +10,10 @@ from typing import Any
 
 from Agents.Codex import CodexSession
 
-from .Evaluation import apply_eval_overrides, parse_score, run_eval, run_prewarm_command
-from .Workspace import create_worktree
+from ..Evaluation.Evaluation import apply_eval_overrides, parse_score, run_eval, run_prewarm_command
+from ..State.Workspace import create_worktree
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 CONFIG_PATH = PROJECT_ROOT / "CodexConfig.toml"
 GENERATED_EVALS_DIR = PROJECT_ROOT / "GeneratedEvals"
 VALIDATION_WORKTREE = PROJECT_ROOT / "Worktrees" / "eval_setup_validation"

@@ -6,13 +6,13 @@ from typing import Any
 
 from Agents.Codex import CodexSession
 
-from .Evaluation import (
+from .Evaluation.Evaluation import (
     HIDDEN_EVAL_TOOL,
     build_eval_followup_message,
     build_eval_handler,
     run_requested_eval,
 )
-from .Learning import (
+from .Learning.Learning import (
     build_summary_request,
     is_experiment_complete,
     parse_experiment_summary,

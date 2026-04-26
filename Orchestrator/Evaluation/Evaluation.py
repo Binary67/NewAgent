@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from .Workspace import snapshot_worktree
+from ..State.Workspace import snapshot_worktree
 
 HIDDEN_EVAL_TOOL = {
     "name": "run_hidden_eval",

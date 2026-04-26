@@ -4,8 +4,9 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from .BestState import BEST_BRANCH, load_best_state, promote_best_state
-from .Evaluation import (
+from .Artifacts.ExperimentLog import append_iteration, append_summary, write_header
+from .Artifacts.ExperimentResults import build_iteration_record, make_result
+from .Evaluation.Evaluation import (
     apply_eval_overrides,
     get_prewarm_watch_state,
     is_better,
@@ -13,16 +14,15 @@ from .Evaluation import (
     run_eval,
     run_prewarm_command,
 )
-from .ExperimentLog import append_iteration, append_summary, write_header
-from .ExperimentResults import build_iteration_record, make_result
 from .ExperimentSession import run_iteration_session
-from .Learning import (
+from .Learning.Learning import (
     append_iteration_record,
     ensure_default_experiment_memory,
     list_changed_files,
 )
-from .Reflection import run_reflection
-from .Workspace import create_worktree, delete_branches, get_head_commit
+from .Learning.Reflection import run_reflection
+from .State.BestState import BEST_BRANCH, load_best_state, promote_best_state
+from .State.Workspace import create_worktree, delete_branches, get_head_commit
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
