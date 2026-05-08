@@ -107,6 +107,12 @@ def run_iteration_session(
                     iteration_summary = parse_experiment_summary(summary_turn.response_text)
                     break
 
+                thread_id = session.thread_id
+                if thread_id is None:
+                    raise ValueError("Codex thread id was unavailable before running evaluation.")
+
+                session_log = session.session_log_path
+                session.close()
                 eval_feedback = run_requested_eval(
                     eval_command,
                     eval_worktree,
@@ -118,6 +124,8 @@ def run_iteration_session(
                     pending_request,
                     maximize,
                 )
+                session.resume(thread_id)
+                session_log = session.session_log_path
                 turn_input = build_eval_followup_message(pending_request["commit"], eval_feedback)
         print(f"Codex done. Session log: {session_log}")
     except ValueError as exc:

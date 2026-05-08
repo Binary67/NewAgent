@@ -253,18 +253,39 @@ class CodexAgent:
         if self._thread_id is not None:
             self.end_session()
 
-        params: dict[str, Any] = {
-            "approvalPolicy": "never",
-            "cwd": normalized_cwd,
-            "sandboxPolicy": {"type": "dangerFullAccess"},
-        }
-        if dynamic_tools:
-            params["dynamicTools"] = dynamic_tools
-
-        result = self._request("thread/start", params)
+        result = self._request("thread/start", self._build_thread_params(normalized_cwd, dynamic_tools))
 
         self._thread_id = self._extract_thread_id(result, "thread/start")
         self._session_log.append_session_started(self._thread_id, normalized_cwd)
+
+    def resume_session(
+        self,
+        thread_id: str,
+        cwd: str,
+        dynamic_tools: list[dict[str, Any]] | None = None,
+    ) -> None:
+        if not thread_id or not thread_id.strip():
+            raise ValueError("thread_id must be a non-empty string.")
+
+        requested_thread_id = thread_id.strip()
+        normalized_cwd = self._normalize_cwd(cwd)
+        self.start()
+
+        if self._thread_id is not None:
+            self.end_session()
+
+        params = self._build_thread_params(normalized_cwd, dynamic_tools)
+        params["threadId"] = requested_thread_id
+        result = self._request("thread/resume", params)
+        resumed_thread_id = self._extract_thread_id(result, "thread/resume")
+        if resumed_thread_id != requested_thread_id:
+            raise self.build_error(
+                f"Codex app-server resumed unexpected thread: {resumed_thread_id!r} "
+                f"instead of {requested_thread_id!r}."
+            )
+
+        self._thread_id = resumed_thread_id
+        self._session_log.append_session_resumed(self._thread_id, normalized_cwd)
 
     def end_session(self) -> None:
         if self._thread_id is None:
@@ -314,6 +335,20 @@ class CodexAgent:
 
     def build_error(self, message: str) -> CodexAgentError:
         return CodexAgentError(message, self.session_log_path)
+
+    def _build_thread_params(
+        self,
+        cwd: str | None,
+        dynamic_tools: list[dict[str, Any]] | None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "approvalPolicy": "never",
+            "cwd": cwd,
+            "sandboxPolicy": {"type": "dangerFullAccess"},
+        }
+        if dynamic_tools:
+            params["dynamicTools"] = dynamic_tools
+        return params
 
     def _consume_turn(self, expected_turn_id: str, instruction: str) -> CodexTurnResult:
         message_buffers: dict[str, str] = {}

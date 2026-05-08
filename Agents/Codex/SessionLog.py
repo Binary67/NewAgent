@@ -61,6 +61,15 @@ class CodexSessionLog:
             ],
         )
 
+    def append_session_resumed(self, thread_id: str, cwd: str | None) -> Path:
+        return self._append_sections(
+            self.path_for_thread(thread_id),
+            [
+                ("Session Resumed", self._describe_session(cwd)),
+                ("Thread Id", thread_id),
+            ],
+        )
+
     def append_turn_started(self, thread_id: str, user_request: str) -> Path:
         return self._append_sections(
             self.path_for_thread(thread_id),

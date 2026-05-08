@@ -86,6 +86,7 @@ class CodexSession:
     ) -> None:
         self._cwd = Path(cwd)
         self._preamble = _load_instructions(role)
+        self._dynamic_tools = dynamic_tools
         self._agent = CodexAgent(
             codex_executable=codex_executable,
             logs_root=logs_root,
@@ -101,6 +102,13 @@ class CodexSession:
     @property
     def session_log_path(self) -> Path | None:
         return self._agent.session_log_path
+
+    @property
+    def thread_id(self) -> str | None:
+        return self._agent.thread_id
+
+    def resume(self, thread_id: str) -> None:
+        self._agent.resume_session(str(thread_id), str(self._cwd), dynamic_tools=self._dynamic_tools)
 
     def run_turn(self, text: str) -> CodexTurnResult:
         full_instruction = f"{self._preamble}\n\n{text}" if self._preamble else text
