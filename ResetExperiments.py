@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import tomllib
 from pathlib import Path
@@ -21,6 +22,7 @@ def reset_experiments(target_repo: str | Path | None = None):
     branch_count = 0
     metadata_removed = False
     learning_file_count = 0
+    generated_eval_file_count = 0
 
     worktree_dir = PROJECT_ROOT / "Worktrees"
     if worktree_dir.exists():
@@ -55,6 +57,19 @@ def reset_experiments(target_repo: str | Path | None = None):
 
     if target_repo:
         target = Path(target_repo).resolve()
+        safe_target_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", target.name).strip("._") or "target_repo"
+        generated_evals_dir = PROJECT_ROOT / "GeneratedEvals"
+        target_generated_eval_dir = generated_evals_dir / safe_target_name
+        if target_generated_eval_dir.exists():
+            generated_eval_file_count = sum(1 for p in target_generated_eval_dir.rglob("*") if p.is_file())
+            shutil.rmtree(target_generated_eval_dir)
+            print(f"Removed {generated_eval_file_count} generated eval file(s) from {target_generated_eval_dir}")
+            if generated_evals_dir.exists() and not any(generated_evals_dir.iterdir()):
+                generated_evals_dir.rmdir()
+                print(f"Removed empty generated evals directory: {generated_evals_dir}")
+        else:
+            print(f"No generated evals to remove for {target.name}.")
+
         prune_worktrees(target, verbose=True)
         print(f"Pruned stale worktree refs in {target}")
 
@@ -72,7 +87,8 @@ def reset_experiments(target_repo: str | Path | None = None):
     print(
         f"\nReset complete. Removed {worktree_count} worktree(s), {log_count} log file(s), "
         f"{branch_count} branch(es), {metadata_count} metadata file(s), "
-        f"{learning_file_count} learning file(s)."
+        f"{learning_file_count} learning file(s), "
+        f"{generated_eval_file_count} generated eval file(s)."
     )
 
 

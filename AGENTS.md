@@ -39,7 +39,7 @@ Keep changes general-purpose. This project should help optimize any target repo 
 | `Orchestrator/Learning/` | Iteration summary parsing, run reflection, experiment memory validation, and durable learning updates. |
 | `Prompts/` | Role instructions injected into Codex sessions. `Base.md` is always loaded; role-specific prompts are loaded by role name. |
 | `ConfigGuard.py` | Creates default prompt files when they are missing. |
-| `ResetExperiments.py` | Local reset utility. Removes generated worktrees, logs, best-state metadata, experiment memory, and experiment branches for the configured target repo. |
+| `ResetExperiments.py` | Local reset utility. Removes generated worktrees, generated evaluator artifacts, logs, best-state metadata, experiment memory, and experiment branches for the configured target repo. |
 | `ExampleUsage/` | Small example for direct `CodexSession` use. |
 | `Documentations/` | Reference documentation, currently for Codex app-server. |
 | `pyproject.toml` / `uv.lock` | Python project metadata and locked dependencies. The project targets Python 3.13 and uses `uv`. |
