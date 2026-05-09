@@ -1,8 +1,10 @@
 const configForm = document.querySelector("#config-form");
 const configStatus = document.querySelector("#config-status");
-const startButton = document.querySelector("#start-button");
+const experimentButton = document.querySelector("#experiment-button");
+const experimentButtonLabel = document.querySelector("#experiment-button-label");
+const experimentStartIcon = experimentButton.querySelector(".experiment-start-icon");
+const experimentStopIcon = experimentButton.querySelector(".experiment-stop-icon");
 const resetButton = document.querySelector("#reset-button");
-const stopButton = document.querySelector("#stop-button");
 const saveButton = document.querySelector("#save-config");
 const logOutput = document.querySelector("#log-output");
 const jobPill = document.querySelector("#job-pill");
@@ -22,11 +24,23 @@ const evalScore = document.querySelector("#eval-score");
 const evalComparison = document.querySelector("#eval-comparison");
 
 let latestEvalResult = null;
+let currentRunning = false;
+let currentJobName = null;
 
 function setRunningState(running, jobName) {
-  startButton.disabled = running;
+  currentRunning = running;
+  currentJobName = jobName || null;
+
+  const experimentRunning = running && jobName === "experiment";
+  experimentButton.dataset.mode = experimentRunning ? "stop" : "start";
+  experimentButton.classList.toggle("primary-button", !experimentRunning);
+  experimentButton.classList.toggle("danger-button", experimentRunning);
+  experimentButton.disabled = running && !experimentRunning;
+  experimentButtonLabel.textContent = experimentRunning ? "Stop Experiment" : "Start Experiment";
+  experimentStartIcon.hidden = experimentRunning;
+  experimentStopIcon.hidden = !experimentRunning;
+
   resetButton.disabled = running;
-  stopButton.disabled = !(running && jobName === "experiment");
   jobPill.textContent = running ? `${jobName || "Job"} running` : "Idle";
   jobPill.classList.toggle("running", running);
 }
@@ -136,9 +150,8 @@ function appendLog(event) {
 }
 
 async function postJob(path) {
-  startButton.disabled = true;
+  experimentButton.disabled = true;
   resetButton.disabled = true;
-  stopButton.disabled = true;
 
   try {
     const response = await fetch(path, { method: "POST" });
@@ -150,7 +163,7 @@ async function postJob(path) {
         timestamp: new Date().toISOString().slice(0, 19),
         running: false,
       });
-      setRunningState(false);
+      setRunningState(currentRunning, currentJobName);
     }
   } catch (error) {
     appendLog({
@@ -159,12 +172,12 @@ async function postJob(path) {
       timestamp: new Date().toISOString().slice(0, 19),
       running: false,
     });
-    setRunningState(false);
+    setRunningState(currentRunning, currentJobName);
   }
 }
 
 async function stopExperiment() {
-  stopButton.disabled = true;
+  experimentButton.disabled = true;
 
   try {
     const response = await fetch("/jobs/stop", { method: "POST" });
@@ -176,6 +189,7 @@ async function stopExperiment() {
         timestamp: new Date().toISOString().slice(0, 19),
         running: false,
       });
+      setRunningState(currentRunning, currentJobName);
     }
   } catch (error) {
     appendLog({
@@ -184,6 +198,7 @@ async function stopExperiment() {
       timestamp: new Date().toISOString().slice(0, 19),
       running: false,
     });
+    setRunningState(currentRunning, currentJobName);
   }
 }
 
@@ -227,16 +242,17 @@ backendInputForm.addEventListener("submit", async (event) => {
   }
 });
 
-startButton.addEventListener("click", () => {
-  postJob("/jobs/start");
-});
-
 resetButton.addEventListener("click", () => {
   postJob("/jobs/reset");
 });
 
-stopButton.addEventListener("click", () => {
-  stopExperiment();
+experimentButton.addEventListener("click", () => {
+  if (experimentButton.dataset.mode === "stop") {
+    stopExperiment();
+    return;
+  }
+
+  postJob("/jobs/start");
 });
 
 const events = new EventSource("/events");
