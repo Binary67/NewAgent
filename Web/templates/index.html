@@ -17,26 +17,18 @@
           <span id="job-pill" class="status-pill">Idle</span>
         </header>
 
-        <form id="config-form" class="config-form">
+        <div class="config-form">
           <div class="form-heading">
             <label for="config-content">CodexConfig.toml</label>
             <span class="path-label">{{ config_path }}</span>
           </div>
           <textarea id="config-content" class="config-editor" name="content" spellcheck="false">{{ config_text }}</textarea>
           <div class="form-actions">
-            <button id="save-config" class="secondary-button icon-button" type="submit">
-              <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"></path>
-                <path d="M17 21v-8H7v8"></path>
-                <path d="M7 3v5h8"></path>
-              </svg>
-              <span>Save Config</span>
-            </button>
             <p id="config-status" class="inline-status">
-              {% if config_exists %}Loaded local config.{% else %}Loaded starter template.{% endif %}
+              Config saves when the experiment starts.
             </p>
           </div>
-        </form>
+        </div>
 
         <div class="primary-actions" aria-label="Experiment actions">
           <button id="experiment-button" class="primary-button icon-button" type="button" data-mode="start">
@@ -118,19 +110,52 @@
           </div>
         </header>
 
-        <section id="eval-summary" class="eval-summary" aria-label="Latest evaluation result" aria-live="polite">
-          <div class="eval-summary-header">
-            <div>
-              <p class="eyebrow">Evaluation</p>
-              <h3>Latest Result</h3>
+        <section id="eval-summary" class="eval-history" aria-label="Evaluation history" aria-live="polite">
+          <section class="eval-section" aria-label="Current evaluation result">
+            <div class="eval-section-header">
+              <p class="eyebrow">Current</p>
+              <span id="eval-current-trial" class="eval-meta">No eval yet</span>
             </div>
-            <span id="eval-trial" class="eval-trial">No eval yet</span>
-          </div>
-          <div class="eval-score-row">
-            <span>Score</span>
-            <strong id="eval-score">--</strong>
-          </div>
-          <p id="eval-comparison" class="eval-comparison">No eval result yet.</p>
+            <div class="eval-metric-row">
+              <span>Score</span>
+              <strong id="eval-current-score">--</strong>
+            </div>
+            <p id="eval-current-comparison" class="eval-comparison">No eval result yet.</p>
+          </section>
+
+          <section class="eval-section" aria-label="Best evaluation result">
+            <div class="eval-section-header">
+              <p class="eyebrow">Best</p>
+              <span id="eval-best-trial" class="eval-meta">--</span>
+            </div>
+            <div class="eval-metric-row">
+              <span>Score</span>
+              <strong id="eval-best-score">--</strong>
+            </div>
+          </section>
+
+          <section class="eval-section eval-trials-section" aria-label="Recorded trials">
+            <div class="eval-section-header">
+              <p class="eyebrow">Trials</p>
+              <span id="eval-count" class="eval-meta">0 recorded</span>
+            </div>
+            <div class="eval-history-list">
+              <table class="eval-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Trial</th>
+                    <th scope="col">Score</th>
+                    <th scope="col">Result</th>
+                  </tr>
+                </thead>
+                <tbody id="eval-trials-body">
+                  <tr class="eval-empty-row">
+                    <td colspan="3">No evals recorded yet.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
         </section>
       </section>
     </main>

@@ -1,11 +1,10 @@
-const configForm = document.querySelector("#config-form");
 const configStatus = document.querySelector("#config-status");
+const configContent = document.querySelector("#config-content");
 const experimentButton = document.querySelector("#experiment-button");
 const experimentButtonLabel = document.querySelector("#experiment-button-label");
 const experimentStartIcon = experimentButton.querySelector(".experiment-start-icon");
 const experimentStopIcon = experimentButton.querySelector(".experiment-stop-icon");
 const resetButton = document.querySelector("#reset-button");
-const saveButton = document.querySelector("#save-config");
 const logOutput = document.querySelector("#log-output");
 const jobPill = document.querySelector("#job-pill");
 const connectionStatus = document.querySelector("#connection-status");
@@ -18,12 +17,15 @@ const backendRecommendation = document.querySelector("#backend-recommendation");
 const backendResponse = document.querySelector("#backend-response");
 const submitBackendInput = document.querySelector("#submit-backend-input");
 const backendInputStatus = document.querySelector("#backend-input-status");
-const evalSummary = document.querySelector("#eval-summary");
-const evalTrial = document.querySelector("#eval-trial");
-const evalScore = document.querySelector("#eval-score");
-const evalComparison = document.querySelector("#eval-comparison");
+const evalCurrentTrial = document.querySelector("#eval-current-trial");
+const evalCurrentScore = document.querySelector("#eval-current-score");
+const evalCurrentComparison = document.querySelector("#eval-current-comparison");
+const evalBestTrial = document.querySelector("#eval-best-trial");
+const evalBestScore = document.querySelector("#eval-best-score");
+const evalCount = document.querySelector("#eval-count");
+const evalTrialsBody = document.querySelector("#eval-trials-body");
 
-let latestEvalResult = null;
+let evalResults = [];
 let currentRunning = false;
 let currentJobName = null;
 
@@ -77,24 +79,106 @@ function hideBackendInput(message = "Input submitted.") {
   setBackendInputStatus(message);
 }
 
-function renderEvalSummary() {
-  evalSummary.classList.toggle("has-eval", Boolean(latestEvalResult));
+function numericScore(result) {
+  const value = Number(result.score);
+  return Number.isFinite(value) ? value : null;
+}
 
-  if (!latestEvalResult) {
-    evalTrial.textContent = "No eval yet";
-    evalScore.textContent = "--";
-    evalComparison.textContent = "No eval result yet.";
+function sortedEvalResults() {
+  return [...evalResults].sort((first, second) => second.trialNumber - first.trialNumber);
+}
+
+function bestEvalResult(results) {
+  return results.reduce((best, result) => {
+    const score = numericScore(result);
+    if (score === null) {
+      return best;
+    }
+    if (!best || score > best.score) {
+      return { result, score };
+    }
+    return best;
+  }, null)?.result || null;
+}
+
+function renderEvalTable(results, current, best) {
+  evalTrialsBody.replaceChildren();
+
+  if (!results.length) {
+    const row = document.createElement("tr");
+    row.className = "eval-empty-row";
+
+    const cell = document.createElement("td");
+    cell.colSpan = 3;
+    cell.textContent = "No evals recorded yet.";
+
+    row.append(cell);
+    evalTrialsBody.append(row);
     return;
   }
 
-  evalTrial.textContent = `Trial ${latestEvalResult.trial}`;
-  evalScore.textContent = latestEvalResult.score;
-  evalComparison.textContent = latestEvalResult.comparison;
+  const fragment = document.createDocumentFragment();
+  for (const result of results) {
+    const row = document.createElement("tr");
+    const isCurrent = result.trialNumber === current.trialNumber;
+    const isBest = best && result.trialNumber === best.trialNumber;
+    row.classList.toggle("is-current", isCurrent);
+    row.classList.toggle("is-best", isBest);
+    row.title = result.comparison;
+
+    const trial = document.createElement("td");
+    trial.textContent = result.trial;
+
+    const score = document.createElement("td");
+    score.className = "eval-table-score";
+    score.textContent = result.score;
+    score.title = result.score;
+
+    const status = document.createElement("td");
+    if (isBest) {
+      const bestLabel = document.createElement("span");
+      bestLabel.className = "eval-best-label";
+      bestLabel.textContent = "Best";
+      status.append(bestLabel);
+    } else if (isCurrent) {
+      status.textContent = "Latest";
+    }
+
+    row.append(trial, score, status);
+    fragment.append(row);
+  }
+
+  evalTrialsBody.append(fragment);
 }
 
-function resetEvalSummary() {
-  latestEvalResult = null;
-  renderEvalSummary();
+function renderEvalHistory() {
+  const results = sortedEvalResults();
+  const current = results[0] || null;
+  const best = bestEvalResult(results);
+
+  evalCount.textContent = `${results.length} recorded`;
+
+  if (!current) {
+    evalCurrentTrial.textContent = "No eval yet";
+    evalCurrentScore.textContent = "--";
+    evalCurrentComparison.textContent = "No eval result yet.";
+    evalBestTrial.textContent = "--";
+    evalBestScore.textContent = "--";
+    renderEvalTable(results, current, best);
+    return;
+  }
+
+  evalCurrentTrial.textContent = `Trial ${current.trial}`;
+  evalCurrentScore.textContent = current.score;
+  evalCurrentComparison.textContent = current.comparison;
+  evalBestTrial.textContent = best ? `Trial ${best.trial}` : "--";
+  evalBestScore.textContent = best ? best.score : "--";
+  renderEvalTable(results, current, best);
+}
+
+function resetEvalHistory() {
+  evalResults = [];
+  renderEvalHistory();
 }
 
 function parseEvalResult(message) {
@@ -105,12 +189,13 @@ function parseEvalResult(message) {
 
   return {
     trial: match[1],
+    trialNumber: Number(match[1]),
     score: match[2],
     comparison: match[3],
   };
 }
 
-function updateEvalSummaryFromLog(event) {
+function updateEvalHistoryFromLog(event) {
   if (event.kind !== "log") {
     return;
   }
@@ -120,11 +205,12 @@ function updateEvalSummaryFromLog(event) {
     return;
   }
 
-  latestEvalResult = evalResult;
-  renderEvalSummary();
+  evalResults = evalResults.filter((result) => result.trialNumber !== evalResult.trialNumber);
+  evalResults.push(evalResult);
+  renderEvalHistory();
 }
 
-function shouldResetEvalSummary(event) {
+function shouldResetEvalHistory(event) {
   return event.kind === "status" && ["Starting experiment.", "Starting reset."].includes(event.message || "");
 }
 
@@ -176,6 +262,41 @@ async function postJob(path) {
   }
 }
 
+async function startExperiment() {
+  experimentButton.disabled = true;
+  resetButton.disabled = true;
+  setConfigStatus("Saving config...");
+
+  try {
+    const response = await fetch("/jobs/start", {
+      method: "POST",
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+      body: configContent.value,
+    });
+    const payload = await response.json();
+    setConfigStatus(payload.message || "Config saved. Experiment started.", !response.ok);
+    if (!response.ok) {
+      appendLog({
+        kind: "error",
+        message: payload.message || "Start request failed.",
+        timestamp: new Date().toISOString().slice(0, 19),
+        running: false,
+      });
+      setRunningState(currentRunning, currentJobName);
+    }
+  } catch (error) {
+    const message = error.message || "Start request failed.";
+    setConfigStatus(message, true);
+    appendLog({
+      kind: "error",
+      message,
+      timestamp: new Date().toISOString().slice(0, 19),
+      running: false,
+    });
+    setRunningState(currentRunning, currentJobName);
+  }
+}
+
 async function stopExperiment() {
   experimentButton.disabled = true;
 
@@ -201,22 +322,6 @@ async function stopExperiment() {
     setRunningState(currentRunning, currentJobName);
   }
 }
-
-configForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  saveButton.disabled = true;
-  setConfigStatus("Saving...");
-
-  const response = await fetch("/config", {
-    method: "POST",
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
-    body: document.querySelector("#config-content").value,
-  });
-  const payload = await response.json();
-
-  setConfigStatus(payload.message || "Config saved.", !response.ok);
-  saveButton.disabled = false;
-});
 
 backendInputForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -252,7 +357,7 @@ experimentButton.addEventListener("click", () => {
     return;
   }
 
-  postJob("/jobs/start");
+  startExperiment();
 });
 
 const events = new EventSource("/events");
@@ -264,10 +369,10 @@ events.onopen = () => {
 events.onmessage = (message) => {
   const event = JSON.parse(message.data);
   appendLog(event);
-  if (shouldResetEvalSummary(event)) {
-    resetEvalSummary();
+  if (shouldResetEvalHistory(event)) {
+    resetEvalHistory();
   }
-  updateEvalSummaryFromLog(event);
+  updateEvalHistoryFromLog(event);
   if (event.kind === "input_request") {
     showBackendInput(event);
   }

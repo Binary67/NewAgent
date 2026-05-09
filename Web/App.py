@@ -286,14 +286,22 @@ async def index(request: Request) -> HTMLResponse:
         {
             "config_text": _read_config_text(),
             "config_path": CONFIG_PATH,
-            "config_exists": CONFIG_PATH.exists(),
         },
     )
 
 
-@app.post("/config")
-async def save_config(request: Request) -> JSONResponse:
+@app.post("/jobs/start")
+async def start_experiment(request: Request) -> JSONResponse:
+    global _job_name, _job_stop_requested, _job_task
+
     content = (await request.body()).decode("utf-8", errors="replace")
+    async with _job_lock:
+        if _is_job_running():
+            return JSONResponse(
+                {"ok": False, "message": f"{_job_name} is already running."},
+                status_code=409,
+            )
+
     try:
         tomllib.loads(content)
     except tomllib.TOMLDecodeError as exc:
@@ -302,14 +310,20 @@ async def save_config(request: Request) -> JSONResponse:
             status_code=400,
         )
 
-    CONFIG_PATH.write_text(f"{content.rstrip()}\n", encoding="utf-8")
-    await _append_event("status", f"Saved {CONFIG_PATH.name}.")
-    return JSONResponse({"ok": True, "message": f"Saved {CONFIG_PATH.name}."})
+    async with _job_lock:
+        if _is_job_running():
+            return JSONResponse(
+                {"ok": False, "message": f"{_job_name} is already running."},
+                status_code=409,
+            )
 
+        CONFIG_PATH.write_text(f"{content.rstrip()}\n", encoding="utf-8")
+        _job_name = "experiment"
+        _job_stop_requested = False
+        _job_task = asyncio.create_task(_run_script("experiment", PROJECT_ROOT / "Main.py"))
 
-@app.post("/jobs/start")
-async def start_experiment() -> JSONResponse:
-    return await _launch_job("experiment", PROJECT_ROOT / "Main.py")
+    await _append_event("status", f"Saved {CONFIG_PATH.name}.", "experiment")
+    return JSONResponse({"ok": True, "message": f"Saved {CONFIG_PATH.name}. Experiment started."})
 
 
 @app.post("/jobs/reset")

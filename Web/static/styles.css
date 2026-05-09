@@ -196,8 +196,24 @@ textarea:focus {
 
 .primary-actions {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
+}
+
+.primary-actions button {
+  padding: 0 10px;
+  font-size: 14px;
+}
+
+.primary-actions .icon-button {
+  gap: 6px;
+}
+
+.primary-actions .icon-button span {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  line-height: 1.15;
 }
 
 .backend-input-panel {
@@ -330,69 +346,163 @@ button:disabled {
   color: var(--accent);
 }
 
-.eval-summary {
-  border: 1px solid rgba(22, 92, 83, 0.24);
-  border-radius: 8px;
-  padding: 14px;
-  background: var(--bg);
+.eval-history {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
   color: var(--text);
 }
 
-.eval-summary-header {
+.eval-section {
+  border-top: 1px solid var(--line);
+  padding: 14px 0;
+}
+
+.eval-section:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.eval-section-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
 }
 
-.eval-summary .eyebrow {
-  margin-bottom: 4px;
+.eval-section-header .eyebrow {
+  margin: 0;
 }
 
-.eval-trial {
-  flex: 0 0 auto;
-  border-radius: 999px;
-  padding: 5px 8px;
-  background: var(--soft);
+.eval-meta {
+  flex: 0 1 auto;
   color: var(--muted);
   font-size: 11px;
   font-weight: 700;
+  text-align: right;
 }
 
-.eval-summary.has-eval .eval-trial {
-  background: rgba(22, 92, 83, 0.08);
-  color: var(--accent);
-}
-
-.eval-score-row {
+.eval-metric-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: end;
+  grid-template-columns: 68px minmax(0, 1fr);
+  align-items: baseline;
   gap: 12px;
-  margin-top: 16px;
+  margin-top: 10px;
 }
 
-.eval-score-row span {
-  padding-bottom: 4px;
+.eval-metric-row span {
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
 }
 
-.eval-score-row strong {
+.eval-metric-row strong {
   overflow-wrap: anywhere;
   color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 30px;
-  line-height: 1;
+  font-size: 19px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
   text-align: right;
 }
 
 .eval-comparison {
   margin: 10px 0 0;
   color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.eval-trials-section {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+
+.eval-history-list {
+  flex: 1;
+  min-height: 0;
+  margin-top: 10px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.eval-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
+}
+
+.eval-table th,
+.eval-table td {
+  overflow: hidden;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eval-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.eval-table th:nth-child(1),
+.eval-table td:nth-child(1) {
+  width: 54px;
+}
+
+.eval-table th:nth-child(2),
+.eval-table td:nth-child(2) {
+  text-align: right;
+}
+
+.eval-table th:nth-child(3),
+.eval-table td:nth-child(3) {
+  width: 64px;
+  text-align: right;
+}
+
+.eval-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.eval-table tbody tr.is-current {
+  background: rgba(22, 92, 83, 0.06);
+}
+
+.eval-table-score {
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 13px;
-  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+
+.eval-best-label {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 2px 6px;
+  background: rgba(22, 92, 83, 0.1);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.eval-empty-row td {
+  color: var(--muted);
+  text-align: left;
 }
 
 .log-output {
