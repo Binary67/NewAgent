@@ -1,4 +1,5 @@
 const configStatus = document.querySelector("#config-status");
+const configStatusRow = document.querySelector("#config-status-row");
 const configContent = document.querySelector("#config-content");
 const experimentButton = document.querySelector("#experiment-button");
 const experimentButtonLabel = document.querySelector("#experiment-button-label");
@@ -26,7 +27,6 @@ const evalCount = document.querySelector("#eval-count");
 const evalTrialsBody = document.querySelector("#eval-trials-body");
 const toastRegion = document.querySelector("#toast-region");
 
-const CONFIG_IDLE_STATUS = "Config saves when the experiment starts.";
 const TOAST_DISMISS_MS = 4000;
 let evalResults = [];
 let currentRunning = false;
@@ -42,7 +42,7 @@ function setRunningState(running, jobName) {
   experimentButton.classList.toggle("primary-button", !experimentRunning);
   experimentButton.classList.toggle("danger-button", experimentRunning);
   experimentButton.disabled = running && !experimentRunning;
-  experimentButtonLabel.textContent = experimentRunning ? "Stop Experiment" : "Start Experiment";
+  experimentButtonLabel.textContent = experimentRunning ? "Stop Experiment" : "Save & Start";
   experimentStartIcon.hidden = experimentRunning;
   experimentStopIcon.hidden = !experimentRunning;
 
@@ -53,6 +53,7 @@ function setRunningState(running, jobName) {
 
 function setConfigStatus(message, isError = false) {
   configStatus.textContent = message;
+  configStatusRow.hidden = !message;
   configStatus.classList.toggle("error", isError);
 }
 
@@ -325,7 +326,7 @@ async function startExperiment() {
       setRunningState(currentRunning, currentJobName);
       return;
     }
-    setConfigStatus(CONFIG_IDLE_STATUS);
+    setConfigStatus("");
     showToast("Experiment started", "CodexConfig.toml saved");
   } catch (error) {
     const message = error.message || "Start request failed.";

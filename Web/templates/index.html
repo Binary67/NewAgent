@@ -23,10 +23,8 @@
             <span class="path-label">{{ config_path }}</span>
           </div>
           <textarea id="config-content" class="config-editor" name="content" spellcheck="false">{{ config_text }}</textarea>
-          <div class="form-actions">
-            <p id="config-status" class="inline-status">
-              Config saves when the experiment starts.
-            </p>
+          <div id="config-status-row" class="form-actions" hidden>
+            <p id="config-status" class="inline-status"></p>
           </div>
         </div>
 
@@ -38,7 +36,7 @@
             <svg class="button-icon experiment-stop-icon" viewBox="0 0 24 24" aria-hidden="true" hidden>
               <rect x="6" y="6" width="12" height="12" rx="1"></rect>
             </svg>
-            <span id="experiment-button-label">Start Experiment</span>
+            <span id="experiment-button-label">Save &amp; Start</span>
           </button>
           <button id="reset-button" class="danger-button icon-button" type="button">
             <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">
