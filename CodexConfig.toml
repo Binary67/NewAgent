@@ -1,9 +1,0 @@
-[Experiment]
-target_repo = "/Users/frank/Desktop/Projects/Kaggle"
-eval_command = "uv run python eval_house_prices_r2.py"
-eval_strategy = "maximize"
-num_iterations = 1
-max_eval_calls = 3
-role = "experiment"
-eval_repo = "/Users/frank/Desktop/Projects/NextResearcher/GeneratedEvals/Kaggle"
-eval_overrides = ["eval_house_prices_r2.py", "house_prices_train.csv"]

@@ -1,7 +1,10 @@
+import shutil
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 PROMPTS_DIR = PROJECT_ROOT / "Prompts"
+CONFIG_PATH = PROJECT_ROOT / "CodexConfig.toml"
+CONFIG_TEMPLATE_PATH = PROJECT_ROOT / "CodexConfig.example.toml"
 
 DEFAULT_PROMPTS = {
     "Base.md": """\
@@ -74,3 +77,6 @@ def ensure_project_files() -> None:
         if not prompt_path.exists():
             prompt_path.write_text(content, encoding="utf-8")
             print(f"Generated default prompt: {prompt_path}")
+    if not CONFIG_PATH.exists() and CONFIG_TEMPLATE_PATH.exists():
+        shutil.copyfile(CONFIG_TEMPLATE_PATH, CONFIG_PATH)
+        print("Generated local config from CodexConfig.example.toml")

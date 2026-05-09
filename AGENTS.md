@@ -18,7 +18,8 @@ Keep changes general-purpose. This project should help optimize any target repo 
 | Path | Purpose |
 | --- | --- |
 | `Main.py` | Runtime entrypoint. Ensures default prompt files exist, loads or creates evaluator setup, then starts the experiment loop. |
-| `CodexConfig.toml` | Local experiment configuration. Defines the target repo, eval command, score direction, iteration count, Codex role, eval repo, and override files. |
+| `CodexConfig.example.toml` | Committed starter template for local experiment configuration. |
+| `CodexConfig.toml` | Ignored local experiment configuration. Defines the target repo, eval command, score direction, iteration count, Codex role, eval repo, and override files. |
 | `Orchestrator/ExperimentRunner.py` | Main experiment loop. Creates worktrees, runs baseline and trial evaluations, records results, promotes the best commit, and triggers reflection. |
 | `Orchestrator/ExperimentSession.py` | Per-iteration Codex session protocol. Handles the hidden eval tool, completion marker, and summary turn. |
 | `Agents/Codex/SessionRunner.py` | High-level Codex session wrapper. Loads role prompts and starts `CodexAgent` with a clean environment. |
@@ -38,7 +39,7 @@ Keep changes general-purpose. This project should help optimize any target repo 
 | `Orchestrator/Artifacts/` | Structured result and log writers for experiment runs and iteration JSONL records. |
 | `Orchestrator/Learning/` | Iteration summary parsing, run reflection, experiment memory validation, and durable learning updates. |
 | `Prompts/` | Role instructions injected into Codex sessions. `Base.md` is always loaded; role-specific prompts are loaded by role name. |
-| `ConfigGuard.py` | Creates default prompt files when they are missing. |
+| `ConfigGuard.py` | Creates default prompt files and bootstraps missing local config from `CodexConfig.example.toml`. |
 | `ResetExperiments.py` | Local reset utility. Removes generated worktrees, generated evaluator artifacts, logs, best-state metadata, experiment memory, and experiment branches for the configured target repo. |
 | `ExampleUsage/` | Small example for direct `CodexSession` use. |
 | `Documentations/` | Reference documentation, currently for Codex app-server. |
@@ -46,7 +47,7 @@ Keep changes general-purpose. This project should help optimize any target repo 
 
 ## Core Workflows
 ### Evaluator Setup
-1. `Main.py` calls `ensure_project_files()` to create missing default prompts.
+1. `Main.py` calls `ensure_project_files()` to create missing default prompts and bootstrap missing local config.
 2. `ensure_evaluator_setup()` reads `CodexConfig.toml`.
 3. If config is missing or invalid, setup launches a Codex session with the `eval_setup` role.
 4. The setup agent may ask focused user clarification through `ask_user_clarification`.
@@ -87,6 +88,8 @@ Do not treat generated artifacts as source unless the user explicitly asks to in
 
 ## Configuration Notes
 - Use `uv` for project execution and dependency management.
+- `CodexConfig.toml` is local runtime configuration and is ignored by git.
+- If `CodexConfig.toml` is missing, startup copies `CodexConfig.example.toml` to create it.
 - `eval_strategy` must be exactly `maximize` or `minimize`.
 - `eval_command` runs from the eval worktree and may use `{worktree}` or `{eval_worktree}` placeholders.
 - Evaluators must print the numeric score as the final non-empty stdout line.

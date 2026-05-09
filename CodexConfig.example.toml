@@ -1,0 +1,9 @@
+[Experiment]
+target_repo = ""
+eval_command = ""
+eval_strategy = "maximize"
+num_iterations = 1
+max_eval_calls = 3
+role = "experiment"
+eval_repo = ""
+eval_overrides = []
