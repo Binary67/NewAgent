@@ -71,6 +71,28 @@ def _format_sse(event: dict[str, object]) -> str:
     return f"id: {event['id']}\ndata: {json.dumps(event)}\n\n"
 
 
+def _current_pending_input_event() -> dict[str, object] | None:
+    if not _waiting_for_input or _pending_input is None:
+        return None
+
+    event = {
+        "id": _next_event_id,
+        "kind": "input_request",
+        "message": "Waiting for browser input.",
+        "job": _job_name,
+        "running": _is_job_running(),
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+    }
+    event.update(_pending_input)
+    return event
+
+
+def _matches_current_pending_input(event: dict[str, object]) -> bool:
+    if event.get("kind") != "input_request" or _pending_input is None:
+        return False
+    return all(event.get(key) == value for key, value in _pending_input.items())
+
+
 def _find_input_prompt(text: str) -> str:
     prompt_positions = [
         (text.rfind(prompt), prompt)
@@ -268,31 +290,34 @@ async def submit_job_input(request: Request) -> JSONResponse:
 @app.get("/events")
 async def events(request: Request) -> StreamingResponse:
     async def stream():
-        async with _events_changed:
-            snapshot = list(_events)
-
         last_event_id = 0
-        for event in snapshot:
-            last_event_id = int(event["id"])
-            yield _format_sse(event)
+        sent_current_input = False
 
         while not await request.is_disconnected():
             heartbeat = False
+            pending_input_event = None
             async with _events_changed:
-                try:
-                    await asyncio.wait_for(_events_changed.wait(), timeout=15)
-                except asyncio.TimeoutError:
-                    new_events = []
-                    heartbeat = True
-                else:
-                    new_events = [event for event in _events if int(event["id"]) > last_event_id]
+                new_events = [event for event in _events if int(event["id"]) > last_event_id]
+                if not new_events and not sent_current_input:
+                    pending_input_event = _current_pending_input_event()
+                if not new_events and pending_input_event is None:
+                    try:
+                        await asyncio.wait_for(_events_changed.wait(), timeout=15)
+                    except asyncio.TimeoutError:
+                        heartbeat = True
+                    else:
+                        continue
 
             if heartbeat:
                 yield ": keep-alive\n\n"
                 continue
 
-            for event in new_events:
-                last_event_id = int(event["id"])
+            for event in new_events or [pending_input_event]:
+                if event is None:
+                    continue
+                last_event_id = max(last_event_id, int(event["id"]))
+                if _matches_current_pending_input(event):
+                    sent_current_input = True
                 yield _format_sse(event)
 
     return StreamingResponse(stream(), media_type="text/event-stream")
