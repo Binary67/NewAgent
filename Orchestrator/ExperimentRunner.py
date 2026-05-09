@@ -61,6 +61,42 @@ def run_experiment_loop(
         current_best_commit = get_head_commit(target_repo)
         print(f"Starting from HEAD: {current_best_commit}")
 
+    if current_best_score is None:
+        initial_eval_worktree = worktree_dir / "initial_baseline_eval"
+        print("No best score recorded. Running initial baseline evaluation once.")
+        try:
+            create_worktree(target_repo, initial_eval_worktree, current_best_commit)
+        except subprocess.CalledProcessError as exc:
+            print(f"Initial baseline worktree creation failed: {exc}")
+        else:
+            if eval_repo_path:
+                apply_eval_overrides(eval_repo_path, initial_eval_worktree, eval_overrides)
+
+            initial_baseline_error = ""
+            if prewarm_command:
+                prewarm_ok, prewarm_error = run_prewarm_command(
+                    initial_eval_worktree,
+                    prewarm_command,
+                    action="Prewarming initial baseline worktree",
+                )
+                if not prewarm_ok:
+                    initial_baseline_error = prewarm_error
+                    print(prewarm_error)
+
+            if not initial_baseline_error:
+                baseline_stdout, baseline_error = run_eval(eval_command, initial_eval_worktree)
+                initial_best_score = parse_score(baseline_stdout) if not baseline_error else None
+                if initial_best_score is None:
+                    print(f"Initial baseline eval failed: {baseline_error or 'unparseable output'}")
+                else:
+                    try:
+                        promote_best_state(target_repo, current_best_commit, initial_best_score, eval_strategy)
+                        current_best_score = initial_best_score
+                        print(f"Initialized {BEST_BRANCH}: {current_best_commit} (score: {current_best_score})")
+                    except Exception as exc:
+                        print(f"Failed to initialize best state: {exc}")
+                        return []
+
     run_id = f"{datetime.now():%Y%m%d_%H%M%S}"
     initial_commit = current_best_commit
     experiment_log = logs_dir / f"experiment_{run_id}.md"
@@ -145,13 +181,11 @@ def run_experiment_loop(
                 continue
 
         eval_prewarm_state = get_prewarm_watch_state(eval_worktree, prewarm_watch_files)
-
-        baseline_stdout, baseline_error = run_eval(eval_command, eval_worktree)
-        baseline_score = parse_score(baseline_stdout) if not baseline_error else None
+        baseline_score = current_best_score
         if baseline_score is not None:
-            print(f"Baseline score: {baseline_score}")
+            print(f"Current best baseline score: {baseline_score}")
         else:
-            print(f"Baseline eval failed: {baseline_error or 'unparseable output'}")
+            print("Current best baseline score unavailable.")
 
         session_result = run_iteration_session(
             iteration=iteration,
