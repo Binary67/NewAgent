@@ -16,6 +16,12 @@ const backendRecommendation = document.querySelector("#backend-recommendation");
 const backendResponse = document.querySelector("#backend-response");
 const submitBackendInput = document.querySelector("#submit-backend-input");
 const backendInputStatus = document.querySelector("#backend-input-status");
+const evalSummary = document.querySelector("#eval-summary");
+const evalTrial = document.querySelector("#eval-trial");
+const evalScore = document.querySelector("#eval-score");
+const evalComparison = document.querySelector("#eval-comparison");
+
+let latestEvalResult = null;
 
 function setRunningState(running, jobName) {
   startButton.disabled = running;
@@ -55,6 +61,57 @@ function hideBackendInput(message = "Input submitted.") {
   backendInputForm.hidden = true;
   submitBackendInput.disabled = false;
   setBackendInputStatus(message);
+}
+
+function renderEvalSummary() {
+  evalSummary.classList.toggle("has-eval", Boolean(latestEvalResult));
+
+  if (!latestEvalResult) {
+    evalTrial.textContent = "No eval yet";
+    evalScore.textContent = "--";
+    evalComparison.textContent = "No eval result yet.";
+    return;
+  }
+
+  evalTrial.textContent = `Trial ${latestEvalResult.trial}`;
+  evalScore.textContent = latestEvalResult.score;
+  evalComparison.textContent = latestEvalResult.comparison;
+}
+
+function resetEvalSummary() {
+  latestEvalResult = null;
+  renderEvalSummary();
+}
+
+function parseEvalResult(message) {
+  const match = message.match(/^\s*\[Eval trial\s+(\d+)\]\s+Score:\s+(.+?)\s+\((Comparison:.+)\)\s*$/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    trial: match[1],
+    score: match[2],
+    comparison: match[3],
+  };
+}
+
+function updateEvalSummaryFromLog(event) {
+  if (event.kind !== "log") {
+    return;
+  }
+
+  const evalResult = parseEvalResult(event.message || "");
+  if (!evalResult) {
+    return;
+  }
+
+  latestEvalResult = evalResult;
+  renderEvalSummary();
+}
+
+function shouldResetEvalSummary(event) {
+  return event.kind === "status" && ["Starting experiment.", "Starting reset."].includes(event.message || "");
 }
 
 function appendLog(event) {
@@ -191,6 +248,10 @@ events.onopen = () => {
 events.onmessage = (message) => {
   const event = JSON.parse(message.data);
   appendLog(event);
+  if (shouldResetEvalSummary(event)) {
+    resetEvalSummary();
+  }
+  updateEvalSummaryFromLog(event);
   if (event.kind === "input_request") {
     showBackendInput(event);
   }

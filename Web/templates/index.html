@@ -83,6 +83,30 @@
           </div>
         </div>
       </section>
+
+      <section class="metrics-panel" aria-labelledby="metrics-title">
+        <header class="metrics-header">
+          <div>
+            <p class="eyebrow">Metrics</p>
+            <h2 id="metrics-title">Eval Details</h2>
+          </div>
+        </header>
+
+        <section id="eval-summary" class="eval-summary" aria-label="Latest evaluation result" aria-live="polite">
+          <div class="eval-summary-header">
+            <div>
+              <p class="eyebrow">Evaluation</p>
+              <h3>Latest Result</h3>
+            </div>
+            <span id="eval-trial" class="eval-trial">No eval yet</span>
+          </div>
+          <div class="eval-score-row">
+            <span>Score</span>
+            <strong id="eval-score">--</strong>
+          </div>
+          <p id="eval-comparison" class="eval-comparison">No eval result yet.</p>
+        </section>
+      </section>
     </main>
     <script src="{{ url_for('static', path='/app.js') }}"></script>
   </body>

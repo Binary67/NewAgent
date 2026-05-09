@@ -37,14 +37,15 @@ textarea {
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(360px, 39vw) minmax(0, 1fr);
+  grid-template-columns: minmax(340px, 31vw) minmax(420px, 1fr) minmax(280px, 18vw);
   height: 100svh;
   min-height: 0;
   overflow: hidden;
 }
 
 .control-panel,
-.log-panel {
+.log-panel,
+.metrics-panel {
   min-width: 0;
   min-height: 0;
   padding: 28px;
@@ -65,8 +66,17 @@ textarea {
   background: var(--bg);
 }
 
+.metrics-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+}
+
 .panel-header,
 .log-header,
+.metrics-header,
 .form-heading,
 .form-actions {
   display: flex;
@@ -85,7 +95,8 @@ textarea {
 }
 
 h1,
-h2 {
+h2,
+h3 {
   margin: 0;
   letter-spacing: 0;
 }
@@ -98,6 +109,11 @@ h1 {
 h2 {
   font-size: 22px;
   line-height: 1.15;
+}
+
+h3 {
+  font-size: 16px;
+  line-height: 1.2;
 }
 
 .status-pill,
@@ -288,6 +304,71 @@ button:disabled {
   color: var(--accent);
 }
 
+.eval-summary {
+  border: 1px solid rgba(22, 92, 83, 0.24);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.eval-summary-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.eval-summary .eyebrow {
+  margin-bottom: 4px;
+}
+
+.eval-trial {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 5px 8px;
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.eval-summary.has-eval .eval-trial {
+  background: rgba(22, 92, 83, 0.08);
+  color: var(--accent);
+}
+
+.eval-score-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: end;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.eval-score-row span {
+  padding-bottom: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.eval-score-row strong {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 30px;
+  line-height: 1;
+  text-align: right;
+}
+
+.eval-comparison {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .log-output {
   flex: 1;
   min-height: 0;
@@ -336,7 +417,7 @@ button:disabled {
   color: #d8ddd9;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1180px) {
   .workspace {
     grid-template-columns: 1fr;
     height: auto;
@@ -349,7 +430,14 @@ button:disabled {
     border-bottom: 1px solid var(--line);
   }
 
+  .metrics-panel {
+    order: 2;
+    border-left: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
   .log-panel {
+    order: 3;
     height: 52svh;
     min-height: 320px;
   }
