@@ -23,6 +23,7 @@ def reset_experiments(target_repo: str | Path | None = None):
     metadata_removed = False
     learning_file_count = 0
     generated_eval_file_count = 0
+    pycache_count = 0
 
     worktree_dir = PROJECT_ROOT / "Worktrees"
     if worktree_dir.exists():
@@ -54,6 +55,16 @@ def reset_experiments(target_repo: str | Path | None = None):
         print(f"Removed best state metadata: {BEST_STATE_PATH}")
     else:
         print("No best state metadata to remove.")
+
+    for pycache_dir in sorted(PROJECT_ROOT.rglob("__pycache__")):
+        if pycache_dir.is_dir():
+            shutil.rmtree(pycache_dir)
+            pycache_count += 1
+
+    if pycache_count:
+        print(f"Removed {pycache_count} __pycache__ dir(s) from {PROJECT_ROOT}")
+    else:
+        print("No __pycache__ directories to remove.")
 
     if target_repo:
         target = Path(target_repo).resolve()
@@ -88,7 +99,8 @@ def reset_experiments(target_repo: str | Path | None = None):
         f"\nReset complete. Removed {worktree_count} worktree(s), {log_count} log file(s), "
         f"{branch_count} branch(es), {metadata_count} metadata file(s), "
         f"{learning_file_count} learning file(s), "
-        f"{generated_eval_file_count} generated eval file(s)."
+        f"{generated_eval_file_count} generated eval file(s), "
+        f"{pycache_count} __pycache__ dir(s)."
     )
 
 
