@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import signal
 import sys
 import tomllib
 from datetime import datetime
@@ -26,11 +28,14 @@ _events_changed = asyncio.Condition()
 _job_lock = asyncio.Lock()
 _job_task: asyncio.Task[None] | None = None
 _job_name: str | None = None
+_job_process: asyncio.subprocess.Process | None = None
 _job_stdin: asyncio.StreamWriter | None = None
+_job_stop_requested = False
 _waiting_for_input = False
 _pending_input: dict[str, str] | None = None
 _next_event_id = 0
 _MAX_EVENTS = 1000
+_STOP_TIMEOUT_SECONDS = 5
 _INPUT_PROMPTS = (
     "Answer (press Enter to use recommendation):",
     "Target repo path:",
@@ -163,11 +168,9 @@ async def _read_process_output(process: asyncio.subprocess.Process, job_name: st
 
 
 async def _run_script(job_name: str, script_path: Path) -> None:
-    global _job_name, _job_stdin, _job_task, _pending_input, _waiting_for_input
+    global _job_name, _job_process, _job_stdin, _job_task, _job_stop_requested, _pending_input, _waiting_for_input
 
     command = [sys.executable, "-u", str(script_path)]
-    await _append_event("status", f"Starting {job_name}.", job_name)
-    await _append_event("command", f"$ {' '.join(command)}", job_name)
 
     try:
         process = await asyncio.create_subprocess_exec(
@@ -176,13 +179,19 @@ async def _run_script(job_name: str, script_path: Path) -> None:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
         )
         async with _job_lock:
+            _job_process = process
             _job_stdin = process.stdin
+        await _append_event("status", f"Starting {job_name}.", job_name)
+        await _append_event("command", f"$ {' '.join(command)}", job_name)
         await _read_process_output(process, job_name)
 
         exit_code = await process.wait()
-        if exit_code == 0:
+        if _job_stop_requested:
+            await _append_event("status", f"{job_name} stopped by user.", job_name)
+        elif exit_code == 0:
             await _append_event("status", f"{job_name} finished with exit code 0.", job_name)
         else:
             await _append_event("error", f"{job_name} finished with exit code {exit_code}.", job_name)
@@ -192,15 +201,17 @@ async def _run_script(job_name: str, script_path: Path) -> None:
         async with _job_lock:
             if asyncio.current_task() is _job_task:
                 _job_name = None
+                _job_process = None
                 _job_stdin = None
                 _job_task = None
+                _job_stop_requested = False
                 _pending_input = None
                 _waiting_for_input = False
         await _append_event("status", "Backend is idle.", job_name)
 
 
 async def _launch_job(job_name: str, script_path: Path) -> JSONResponse:
-    global _job_name, _job_task
+    global _job_name, _job_stop_requested, _job_task
 
     async with _job_lock:
         if _is_job_running():
@@ -209,9 +220,62 @@ async def _launch_job(job_name: str, script_path: Path) -> JSONResponse:
                 status_code=409,
             )
         _job_name = job_name
+        _job_stop_requested = False
         _job_task = asyncio.create_task(_run_script(job_name, script_path))
 
     return JSONResponse({"ok": True, "message": f"{job_name} started."})
+
+
+async def _stop_experiment_job() -> JSONResponse:
+    global _job_stop_requested, _pending_input, _waiting_for_input
+
+    async with _job_lock:
+        if not _is_job_running():
+            return JSONResponse(
+                {"ok": False, "message": "No backend job is running."},
+                status_code=409,
+            )
+        if _job_name != "experiment":
+            return JSONResponse(
+                {"ok": False, "message": f"{_job_name} is running and cannot be stopped here."},
+                status_code=409,
+            )
+        if _job_process is None:
+            return JSONResponse(
+                {"ok": False, "message": "Experiment process is not ready yet."},
+                status_code=409,
+            )
+
+        process = _job_process
+        job_name = _job_name
+        _job_stop_requested = True
+        _pending_input = None
+        _waiting_for_input = False
+
+    await _append_event("status", "Stop requested for experiment.", job_name)
+
+    if process.returncode is not None:
+        await _append_event("status", "Experiment process already stopped.", job_name)
+        return JSONResponse({"ok": True, "message": "Experiment already stopped."})
+
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+        try:
+            await asyncio.wait_for(process.wait(), timeout=_STOP_TIMEOUT_SECONDS)
+            await _append_event("status", "Experiment process terminated.", job_name)
+        except asyncio.TimeoutError:
+            os.killpg(process.pid, signal.SIGKILL)
+            await process.wait()
+            await _append_event("status", "Experiment process killed after stop timeout.", job_name)
+    except ProcessLookupError:
+        await _append_event("status", "Experiment process already stopped.", job_name)
+    except Exception as exc:
+        return JSONResponse(
+            {"ok": False, "message": f"Failed to stop experiment: {exc}"},
+            status_code=500,
+        )
+
+    return JSONResponse({"ok": True, "message": "Experiment stop requested."})
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -251,6 +315,11 @@ async def start_experiment() -> JSONResponse:
 @app.post("/jobs/reset")
 async def reset_experiment() -> JSONResponse:
     return await _launch_job("reset", PROJECT_ROOT / "ResetExperiments.py")
+
+
+@app.post("/jobs/stop")
+async def stop_experiment() -> JSONResponse:
+    return await _stop_experiment_job()
 
 
 @app.post("/jobs/input")

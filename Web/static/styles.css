@@ -184,6 +184,10 @@ textarea:focus {
   gap: 10px;
 }
 
+#stop-button {
+  grid-column: 1 / -1;
+}
+
 .backend-input-panel {
   display: flex;
   flex-direction: column;

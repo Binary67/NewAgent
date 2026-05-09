@@ -2,6 +2,7 @@ const configForm = document.querySelector("#config-form");
 const configStatus = document.querySelector("#config-status");
 const startButton = document.querySelector("#start-button");
 const resetButton = document.querySelector("#reset-button");
+const stopButton = document.querySelector("#stop-button");
 const saveButton = document.querySelector("#save-config");
 const logOutput = document.querySelector("#log-output");
 const jobPill = document.querySelector("#job-pill");
@@ -19,6 +20,7 @@ const backendInputStatus = document.querySelector("#backend-input-status");
 function setRunningState(running, jobName) {
   startButton.disabled = running;
   resetButton.disabled = running;
+  stopButton.disabled = !(running && jobName === "experiment");
   jobPill.textContent = running ? `${jobName || "Job"} running` : "Idle";
   jobPill.classList.toggle("running", running);
 }
@@ -79,6 +81,7 @@ function appendLog(event) {
 async function postJob(path) {
   startButton.disabled = true;
   resetButton.disabled = true;
+  stopButton.disabled = true;
 
   try {
     const response = await fetch(path, { method: "POST" });
@@ -100,6 +103,30 @@ async function postJob(path) {
       running: false,
     });
     setRunningState(false);
+  }
+}
+
+async function stopExperiment() {
+  stopButton.disabled = true;
+
+  try {
+    const response = await fetch("/jobs/stop", { method: "POST" });
+    const payload = await response.json();
+    if (!response.ok) {
+      appendLog({
+        kind: "error",
+        message: payload.message || "Stop request failed.",
+        timestamp: new Date().toISOString().slice(0, 19),
+        running: false,
+      });
+    }
+  } catch (error) {
+    appendLog({
+      kind: "error",
+      message: error.message || "Stop request failed.",
+      timestamp: new Date().toISOString().slice(0, 19),
+      running: false,
+    });
   }
 }
 
@@ -149,6 +176,10 @@ startButton.addEventListener("click", () => {
 
 resetButton.addEventListener("click", () => {
   postJob("/jobs/reset");
+});
+
+stopButton.addEventListener("click", () => {
+  stopExperiment();
 });
 
 const events = new EventSource("/events");
