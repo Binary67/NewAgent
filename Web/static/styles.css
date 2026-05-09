@@ -118,7 +118,7 @@ h2 {
 .config-form {
   display: flex;
   min-height: 0;
-  flex: 1;
+  flex: 0 0 auto;
   flex-direction: column;
   gap: 10px;
 }
@@ -138,8 +138,6 @@ h2 {
 }
 
 textarea {
-  min-height: 380px;
-  flex: 1;
   resize: none;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -154,6 +152,12 @@ textarea {
 
 textarea:focus {
   border-color: var(--accent);
+}
+
+.config-editor {
+  height: min(260px, 32svh);
+  min-height: 180px;
+  flex: 0 0 auto;
 }
 
 .form-actions {
@@ -175,6 +179,62 @@ textarea:focus {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+}
+
+.backend-input-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 22px;
+}
+
+.backend-input-panel[hidden] {
+  display: none;
+}
+
+.input-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.backend-input-panel h2 {
+  font-size: 18px;
+}
+
+.backend-prompt {
+  margin: 0;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+}
+
+.input-detail {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  gap: 12px;
+  margin: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.input-detail span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.input-detail p {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.backend-response {
+  min-height: 92px;
 }
 
 button {
@@ -236,7 +296,7 @@ button:disabled {
 
 .log-line {
   display: grid;
-  grid-template-columns: 72px 74px minmax(0, 1fr);
+  grid-template-columns: 72px 116px minmax(0, 1fr);
   gap: 10px;
   min-height: 19px;
   white-space: pre-wrap;

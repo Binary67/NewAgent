@@ -22,7 +22,7 @@
             <label for="config-content">CodexConfig.toml</label>
             <span class="path-label">{{ config_path }}</span>
           </div>
-          <textarea id="config-content" name="content" spellcheck="false">{{ config_text }}</textarea>
+          <textarea id="config-content" class="config-editor" name="content" spellcheck="false">{{ config_text }}</textarea>
           <div class="form-actions">
             <button id="save-config" class="secondary-button" type="submit">Save Config</button>
             <p id="config-status" class="inline-status">
@@ -35,6 +35,35 @@
           <button id="start-button" class="primary-button" type="button">Start Experiment</button>
           <button id="reset-button" class="danger-button" type="button">Reset Experiment</button>
         </div>
+
+        <form id="backend-input-form" class="backend-input-panel" hidden>
+          <div class="input-heading">
+            <div>
+              <p class="eyebrow">Backend Input</p>
+              <h2>Response Needed</h2>
+            </div>
+          </div>
+          <p id="backend-input-prompt" class="backend-prompt"></p>
+          <div id="backend-question-row" class="input-detail" hidden>
+            <span>Question</span>
+            <p id="backend-question"></p>
+          </div>
+          <div id="backend-recommendation-row" class="input-detail" hidden>
+            <span>Recommendation</span>
+            <p id="backend-recommendation"></p>
+          </div>
+          <textarea
+            id="backend-response"
+            class="backend-response"
+            name="response"
+            placeholder="Leave blank to accept the recommendation."
+            spellcheck="false"
+          ></textarea>
+          <div class="form-actions">
+            <button id="submit-backend-input" class="secondary-button" type="submit">Submit Response</button>
+            <p id="backend-input-status" class="inline-status">Waiting for response.</p>
+          </div>
+        </form>
       </section>
 
       <section class="log-panel" aria-labelledby="log-title">

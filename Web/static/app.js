@@ -6,6 +6,15 @@ const saveButton = document.querySelector("#save-config");
 const logOutput = document.querySelector("#log-output");
 const jobPill = document.querySelector("#job-pill");
 const connectionStatus = document.querySelector("#connection-status");
+const backendInputForm = document.querySelector("#backend-input-form");
+const backendInputPrompt = document.querySelector("#backend-input-prompt");
+const backendQuestionRow = document.querySelector("#backend-question-row");
+const backendRecommendationRow = document.querySelector("#backend-recommendation-row");
+const backendQuestion = document.querySelector("#backend-question");
+const backendRecommendation = document.querySelector("#backend-recommendation");
+const backendResponse = document.querySelector("#backend-response");
+const submitBackendInput = document.querySelector("#submit-backend-input");
+const backendInputStatus = document.querySelector("#backend-input-status");
 
 function setRunningState(running, jobName) {
   startButton.disabled = running;
@@ -17,6 +26,33 @@ function setRunningState(running, jobName) {
 function setConfigStatus(message, isError = false) {
   configStatus.textContent = message;
   configStatus.classList.toggle("error", isError);
+}
+
+function setBackendInputStatus(message, isError = false) {
+  backendInputStatus.textContent = message;
+  backendInputStatus.classList.toggle("error", isError);
+}
+
+function setInputDetail(row, target, value) {
+  target.textContent = value || "";
+  row.hidden = !value;
+}
+
+function showBackendInput(event) {
+  backendInputPrompt.textContent = event.prompt || event.message || "Backend is waiting for input.";
+  setInputDetail(backendQuestionRow, backendQuestion, event.question || "");
+  setInputDetail(backendRecommendationRow, backendRecommendation, event.recommendation || "");
+  backendResponse.value = "";
+  submitBackendInput.disabled = false;
+  setBackendInputStatus("Waiting for response.");
+  backendInputForm.hidden = false;
+  backendResponse.focus();
+}
+
+function hideBackendInput(message = "Input submitted.") {
+  backendInputForm.hidden = true;
+  submitBackendInput.disabled = false;
+  setBackendInputStatus(message);
 }
 
 function appendLog(event) {
@@ -83,6 +119,30 @@ configForm.addEventListener("submit", async (event) => {
   saveButton.disabled = false;
 });
 
+backendInputForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  submitBackendInput.disabled = true;
+  setBackendInputStatus("Submitting...");
+
+  try {
+    const response = await fetch("/jobs/input", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ response: backendResponse.value }),
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      setBackendInputStatus(payload.message || "Input was rejected.", true);
+      submitBackendInput.disabled = false;
+      return;
+    }
+    hideBackendInput(payload.message || "Input submitted.");
+  } catch (error) {
+    setBackendInputStatus(error.message || "Input request failed.", true);
+    submitBackendInput.disabled = false;
+  }
+});
+
 startButton.addEventListener("click", () => {
   postJob("/jobs/start");
 });
@@ -100,6 +160,12 @@ events.onopen = () => {
 events.onmessage = (message) => {
   const event = JSON.parse(message.data);
   appendLog(event);
+  if (event.kind === "input_request") {
+    showBackendInput(event);
+  }
+  if (event.kind === "input_submitted") {
+    hideBackendInput();
+  }
   setRunningState(Boolean(event.running), event.job);
 };
 
