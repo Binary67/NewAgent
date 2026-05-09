@@ -38,12 +38,15 @@ textarea {
 .workspace {
   display: grid;
   grid-template-columns: minmax(360px, 39vw) minmax(0, 1fr);
-  min-height: 100svh;
+  height: 100svh;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .control-panel,
 .log-panel {
   min-width: 0;
+  min-height: 0;
   padding: 28px;
 }
 
@@ -283,7 +286,8 @@ button:disabled {
 
 .log-output {
   flex: 1;
-  overflow: auto;
+  min-height: 0;
+  overflow-y: auto;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #101211;
@@ -331,6 +335,9 @@ button:disabled {
 @media (max-width: 900px) {
   .workspace {
     grid-template-columns: 1fr;
+    height: auto;
+    min-height: 100svh;
+    overflow: visible;
   }
 
   .control-panel {
@@ -339,6 +346,7 @@ button:disabled {
   }
 
   .log-panel {
-    min-height: 52svh;
+    height: 52svh;
+    min-height: 320px;
   }
 }
