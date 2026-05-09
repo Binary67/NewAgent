@@ -24,10 +24,14 @@ const evalBestTrial = document.querySelector("#eval-best-trial");
 const evalBestScore = document.querySelector("#eval-best-score");
 const evalCount = document.querySelector("#eval-count");
 const evalTrialsBody = document.querySelector("#eval-trials-body");
+const toastRegion = document.querySelector("#toast-region");
 
+const CONFIG_IDLE_STATUS = "Config saves when the experiment starts.";
+const TOAST_DISMISS_MS = 4000;
 let evalResults = [];
 let currentRunning = false;
 let currentJobName = null;
+let toastDismissTimer = null;
 
 function setRunningState(running, jobName) {
   currentRunning = running;
@@ -50,6 +54,42 @@ function setRunningState(running, jobName) {
 function setConfigStatus(message, isError = false) {
   configStatus.textContent = message;
   configStatus.classList.toggle("error", isError);
+}
+
+function showToast(title, detail, type = "success") {
+  window.clearTimeout(toastDismissTimer);
+  toastRegion.replaceChildren();
+
+  const toast = document.createElement("div");
+  toast.className = `toast ${type}-toast`;
+
+  const titleElement = document.createElement("strong");
+  titleElement.className = "toast-title";
+  titleElement.textContent = title;
+
+  const detailElement = document.createElement("span");
+  detailElement.className = "toast-detail";
+  detailElement.textContent = detail;
+
+  toast.append(titleElement, detailElement);
+  toastRegion.append(toast);
+
+  requestAnimationFrame(() => {
+    toast.classList.add("visible");
+  });
+
+  toastDismissTimer = window.setTimeout(() => {
+    toast.classList.remove("visible");
+    toast.addEventListener(
+      "transitionend",
+      () => {
+        if (toast.parentElement === toastRegion) {
+          toastRegion.replaceChildren();
+        }
+      },
+      { once: true },
+    );
+  }, TOAST_DISMISS_MS);
 }
 
 function setBackendInputStatus(message, isError = false) {
@@ -274,8 +314,8 @@ async function startExperiment() {
       body: configContent.value,
     });
     const payload = await response.json();
-    setConfigStatus(payload.message || "Config saved. Experiment started.", !response.ok);
     if (!response.ok) {
+      setConfigStatus(payload.message || "Start request failed.", true);
       appendLog({
         kind: "error",
         message: payload.message || "Start request failed.",
@@ -283,7 +323,10 @@ async function startExperiment() {
         running: false,
       });
       setRunningState(currentRunning, currentJobName);
+      return;
     }
+    setConfigStatus(CONFIG_IDLE_STATUS);
+    showToast("Experiment started", "CodexConfig.toml saved");
   } catch (error) {
     const message = error.message || "Start request failed.";
     setConfigStatus(message, true);

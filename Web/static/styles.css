@@ -553,6 +553,49 @@ button:disabled {
   color: #d8ddd9;
 }
 
+.toast-region {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 20;
+  display: flex;
+  width: min(360px, calc(100vw - 32px));
+  justify-content: flex-end;
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 3px;
+  border: 1px solid rgba(22, 92, 83, 0.24);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 12px 34px rgba(17, 19, 18, 0.16);
+  color: var(--text);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.toast-title {
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.toast-detail {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 @media (max-width: 1180px) {
   .workspace {
     grid-template-columns: 1fr;
@@ -576,5 +619,11 @@ button:disabled {
     order: 3;
     height: 52svh;
     min-height: 320px;
+  }
+
+  .toast-region {
+    right: 16px;
+    bottom: 16px;
+    width: calc(100vw - 32px);
   }
 }
