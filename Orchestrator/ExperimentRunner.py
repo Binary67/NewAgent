@@ -8,11 +8,9 @@ from .Artifacts.ExperimentLog import append_iteration, append_summary, write_hea
 from .Artifacts.ExperimentResults import build_iteration_record, make_result
 from .Evaluation.Evaluation import (
     apply_eval_overrides,
-    get_prewarm_watch_state,
     is_better,
     parse_score,
     run_eval,
-    run_prewarm_command,
 )
 from .ExperimentSession import run_iteration_session
 from .Learning.Learning import (
@@ -36,14 +34,11 @@ def run_experiment_loop(
     eval_strategy: str = "maximize",
     eval_repo: str | Path = "",
     eval_overrides: list[str] | None = None,
-    prewarm_command: str = "",
-    prewarm_watch_files: list[str] | None = None,
 ):
     maximize = eval_strategy == "maximize"
     target_repo = Path(target_repo).resolve()
     eval_repo_path = Path(eval_repo).resolve() if eval_repo else None
     eval_overrides = eval_overrides or []
-    prewarm_watch_files = prewarm_watch_files or []
     worktree_dir = PROJECT_ROOT / "Worktrees"
     logs_dir = PROJECT_ROOT / "Logs"
     worktree_dir.mkdir(parents=True, exist_ok=True)
@@ -72,30 +67,18 @@ def run_experiment_loop(
             if eval_repo_path:
                 apply_eval_overrides(eval_repo_path, initial_eval_worktree, eval_overrides)
 
-            initial_baseline_error = ""
-            if prewarm_command:
-                prewarm_ok, prewarm_error = run_prewarm_command(
-                    initial_eval_worktree,
-                    prewarm_command,
-                    action="Prewarming initial baseline worktree",
-                )
-                if not prewarm_ok:
-                    initial_baseline_error = prewarm_error
-                    print(prewarm_error)
-
-            if not initial_baseline_error:
-                baseline_stdout, baseline_error = run_eval(eval_command, initial_eval_worktree)
-                initial_best_score = parse_score(baseline_stdout) if not baseline_error else None
-                if initial_best_score is None:
-                    print(f"Initial baseline eval failed: {baseline_error or 'unparseable output'}")
-                else:
-                    try:
-                        promote_best_state(target_repo, current_best_commit, initial_best_score, eval_strategy)
-                        current_best_score = initial_best_score
-                        print(f"Initialized {BEST_BRANCH}: {current_best_commit} (score: {current_best_score})")
-                    except Exception as exc:
-                        print(f"Failed to initialize best state: {exc}")
-                        return []
+            baseline_stdout, baseline_error = run_eval(eval_command, initial_eval_worktree)
+            initial_best_score = parse_score(baseline_stdout) if not baseline_error else None
+            if initial_best_score is None:
+                print(f"Initial baseline eval failed: {baseline_error or 'unparseable output'}")
+            else:
+                try:
+                    promote_best_state(target_repo, current_best_commit, initial_best_score, eval_strategy)
+                    current_best_score = initial_best_score
+                    print(f"Initialized {BEST_BRANCH}: {current_best_commit} (score: {current_best_score})")
+                except Exception as exc:
+                    print(f"Failed to initialize best state: {exc}")
+                    return []
 
     run_id = f"{datetime.now():%Y%m%d_%H%M%S}"
     initial_commit = current_best_commit
@@ -141,46 +124,6 @@ def run_experiment_loop(
         print(f"Agent worktree ready: {agent_worktree}")
         print(f"Eval worktree ready:  {eval_worktree}")
 
-        if prewarm_command:
-            agent_prewarm_ok, agent_prewarm_error = run_prewarm_command(
-                agent_worktree,
-                prewarm_command,
-                action="Prewarming agent worktree",
-            )
-            if not agent_prewarm_ok:
-                print(agent_prewarm_error)
-                result = make_result(
-                    iteration,
-                    agent_worktree,
-                    base_commit=base_commit,
-                    status="setup_error",
-                    error=agent_prewarm_error,
-                )
-                results.append(result)
-                append_iteration(experiment_log, result, BEST_BRANCH)
-                append_iteration_record(iteration_record_path, build_iteration_record(run_id, result))
-                continue
-
-            eval_prewarm_ok, eval_prewarm_error = run_prewarm_command(
-                eval_worktree,
-                prewarm_command,
-                action="Prewarming eval worktree",
-            )
-            if not eval_prewarm_ok:
-                print(eval_prewarm_error)
-                result = make_result(
-                    iteration,
-                    agent_worktree,
-                    base_commit=base_commit,
-                    status="setup_error",
-                    error=eval_prewarm_error,
-                )
-                results.append(result)
-                append_iteration(experiment_log, result, BEST_BRANCH)
-                append_iteration_record(iteration_record_path, build_iteration_record(run_id, result))
-                continue
-
-        eval_prewarm_state = get_prewarm_watch_state(eval_worktree, prewarm_watch_files)
         baseline_score = current_best_score
         if baseline_score is not None:
             print(f"Current best baseline score: {baseline_score}")
@@ -195,11 +138,8 @@ def run_experiment_loop(
             eval_command=eval_command,
             eval_repo_path=eval_repo_path,
             eval_overrides=eval_overrides,
-            prewarm_command=prewarm_command,
-            prewarm_watch_files=prewarm_watch_files,
             baseline_score=baseline_score,
             max_eval_calls=max_eval_calls,
-            eval_prewarm_state=eval_prewarm_state,
             maximize=maximize,
         )
 

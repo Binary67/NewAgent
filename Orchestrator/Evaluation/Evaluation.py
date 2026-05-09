@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -92,44 +91,6 @@ def build_eval_handler(agent_worktree: Path, eval_state: dict[str, Any]):
     return eval_handler
 
 
-def run_prewarm_command(worktree_path: Path, prewarm_command: str, *, action: str) -> tuple[bool, str]:
-    print(f"{action}: {worktree_path}")
-    try:
-        result = subprocess.run(
-            prewarm_command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=300,
-            cwd=str(worktree_path),
-            env=_build_prewarm_environment(),
-        )
-    except subprocess.TimeoutExpired:
-        return (False, f"{action} failed for {worktree_path}: TIMEOUT")
-    except Exception as exc:
-        return (False, f"{action} failed for {worktree_path}: {exc}")
-
-    if result.returncode == 0:
-        print(f"{action} complete: {worktree_path}")
-        return (True, "")
-
-    details = "\n".join(part for part in (result.stdout.strip(), result.stderr.strip()) if part)
-    suffix = f":\n{details}" if details else ""
-    return (False, f"{action} failed for {worktree_path} (exit {result.returncode}){suffix}")
-
-
-def get_prewarm_watch_state(worktree_path: Path, prewarm_watch_files: list[str]) -> tuple[tuple[str, bool, int, int], ...]:
-    state: list[tuple[str, bool, int, int]] = []
-    for relative_path in prewarm_watch_files:
-        path = worktree_path / relative_path
-        if not path.exists():
-            state.append((relative_path, False, -1, -1))
-            continue
-        stat = path.stat()
-        state.append((relative_path, True, stat.st_size, stat.st_mtime_ns))
-    return tuple(state)
-
-
 def apply_eval_overrides(eval_repo: Path, eval_worktree: Path, overrides: list[str]) -> None:
     for pattern in overrides:
         matches = list(eval_repo.glob(pattern))
@@ -149,8 +110,6 @@ def run_requested_eval(
     eval_worktree: Path,
     eval_repo_path: Path | None,
     eval_overrides: list[str],
-    prewarm_command: str,
-    prewarm_watch_files: list[str],
     eval_state: dict[str, Any],
     pending_request: dict[str, Any],
     maximize: bool,
@@ -160,16 +119,6 @@ def run_requested_eval(
         _sync_eval_worktree(eval_worktree, commit_hash)
         if eval_repo_path:
             apply_eval_overrides(eval_repo_path, eval_worktree, eval_overrides)
-
-        if prewarm_command:
-            prewarm_ok, prewarm_error = run_prewarm_command(
-                eval_worktree,
-                prewarm_command,
-                action="Rewarming eval worktree",
-            )
-            if not prewarm_ok:
-                return f"Evaluation error: {prewarm_error}"
-            eval_state["prewarm_state"] = get_prewarm_watch_state(eval_worktree, prewarm_watch_files)
 
         score_stdout, score_error = run_eval(eval_command, eval_worktree)
         if score_error:
@@ -238,13 +187,6 @@ def run_eval(eval_command: str, eval_worktree: Path) -> tuple[str, str]:
         return "", f"exit {result.returncode}: {result.stderr.strip()}"
     except Exception as exc:
         return "", str(exc)
-
-
-def _build_prewarm_environment() -> dict[str, str]:
-    environment = dict(os.environ)
-    for key in ("VIRTUAL_ENV", "PYTHONHOME", "__PYVENV_LAUNCHER__"):
-        environment.pop(key, None)
-    return environment
 
 
 def _sync_eval_worktree(eval_worktree: Path, commit_hash: str) -> None:

@@ -34,7 +34,7 @@ Keep changes general-purpose. This project should help optimize any target repo 
 | `Agents/Codex/SessionLog.py` | Markdown session logs for user requests, responses, commands, tool calls, errors, and recoveries. |
 | `Orchestrator/` | Experiment orchestration package. Imports `ensure_evaluator_setup` and `run_experiment_loop` through `Orchestrator/__init__.py`. |
 | `Orchestrator/Setup/` | Evaluator setup and validation. Can launch a setup Codex session, ask user clarification, generate evaluator artifacts, and write `CodexConfig.toml`. |
-| `Orchestrator/Evaluation/` | Hidden evaluation support. Defines `run_hidden_eval`, score parsing, eval command execution, eval override copying, prewarm handling, and eval worktree syncing. |
+| `Orchestrator/Evaluation/` | Hidden evaluation support. Defines `run_hidden_eval`, score parsing, eval command execution, eval override copying, and eval worktree syncing. |
 | `Orchestrator/State/` | Git state helpers. Creates/removes worktrees, snapshots trials, manages experiment branches, and maintains `best/current` plus `BestState.json`. |
 | `Orchestrator/Artifacts/` | Structured result and log writers for experiment runs and iteration JSONL records. |
 | `Orchestrator/Learning/` | Iteration summary parsing, run reflection, experiment memory validation, and durable learning updates. |
@@ -53,7 +53,7 @@ Keep changes general-purpose. This project should help optimize any target repo 
 4. The setup agent may ask focused user clarification through `ask_user_clarification`.
 5. Generated evaluator files must stay inside `GeneratedEvals/<target_repo_name>/`.
 6. The setup agent submits config through `submit_eval_setup`.
-7. Validation creates a worktree, applies eval overrides, optionally runs prewarm, runs `eval_command`, and requires the final non-empty stdout line to parse as a number.
+7. Validation creates a worktree, applies eval overrides, runs `eval_command`, and requires the final non-empty stdout line to parse as a number.
 
 ### Experiment Loop
 1. `run_experiment_loop()` loads the existing best state or starts from target repo `HEAD`.
@@ -94,7 +94,6 @@ Do not treat generated artifacts as source unless the user explicitly asks to in
 - `eval_command` runs from the eval worktree and may use `{worktree}` or `{eval_worktree}` placeholders.
 - Evaluators must print the numeric score as the final non-empty stdout line.
 - `eval_overrides` are paths or glob patterns relative to `eval_repo`; absolute paths and `..` are invalid.
-- `prewarm_command` is optional. If used with `prewarm_watch_files`, the eval worktree is rewarmed only when watched files change.
 
 ## Coding Contracts specific for this codebase
 

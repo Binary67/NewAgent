@@ -10,7 +10,7 @@ from typing import Any
 
 from Agents.Codex import CodexSession
 
-from ..Evaluation.Evaluation import apply_eval_overrides, parse_score, run_eval, run_prewarm_command
+from ..Evaluation.Evaluation import apply_eval_overrides, parse_score, run_eval
 from ..State.Workspace import create_worktree
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -71,11 +71,6 @@ SUBMIT_EVAL_SETUP_TOOL = {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": "Generated evaluator files or glob patterns to copy into eval worktrees.",
-            },
-            "prewarm_command": {"type": "string"},
-            "prewarm_watch_files": {
-                "type": "array",
-                "items": {"type": "string"},
             },
         },
         "required": ["eval_command", "eval_strategy", "eval_repo", "eval_overrides"],
@@ -148,16 +143,6 @@ def validate_experiment_config(config: dict[str, Any]) -> str:
     try:
         if eval_repo_path:
             apply_eval_overrides(eval_repo_path, VALIDATION_WORKTREE, [str(pattern) for pattern in eval_overrides])
-
-        prewarm_command = str(config.get("prewarm_command", "")).strip()
-        if prewarm_command:
-            prewarm_ok, prewarm_error = run_prewarm_command(
-                VALIDATION_WORKTREE,
-                prewarm_command,
-                action="Validating eval prewarm",
-            )
-            if not prewarm_ok:
-                return prewarm_error
 
         stdout, error = run_eval(eval_command, VALIDATION_WORKTREE)
         if error:
@@ -330,8 +315,6 @@ def _build_experiment_config(raw_config: dict[str, Any], target_repo: Path) -> d
         "role": str(raw_config.get("role", "experiment")).strip() or "experiment",
         "eval_repo": str(raw_config.get("eval_repo", "")).strip(),
         "eval_overrides": _string_list(raw_config.get("eval_overrides")),
-        "prewarm_command": str(raw_config.get("prewarm_command", "")).strip(),
-        "prewarm_watch_files": _string_list(raw_config.get("prewarm_watch_files")),
     }
 
 
@@ -362,8 +345,6 @@ def _config_from_submission(
             "eval_strategy": str(submission.get("eval_strategy", "")).strip(),
             "eval_repo": str(expected_eval_repo),
             "eval_overrides": eval_overrides,
-            "prewarm_command": str(submission.get("prewarm_command", "")).strip(),
-            "prewarm_watch_files": _string_list(submission.get("prewarm_watch_files")),
         }
     )
     return config, ""
@@ -457,11 +438,6 @@ def _write_experiment_config(config: dict[str, Any]) -> None:
         f"eval_repo = {_toml_string(config['eval_repo'])}",
         f"eval_overrides = {_toml_string_list(config['eval_overrides'])}",
     ]
-
-    if config.get("prewarm_command"):
-        lines.append(f"prewarm_command = {_toml_string(config['prewarm_command'])}")
-    if config.get("prewarm_watch_files"):
-        lines.append(f"prewarm_watch_files = {_toml_string_list(config['prewarm_watch_files'])}")
 
     CONFIG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

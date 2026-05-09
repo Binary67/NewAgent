@@ -28,18 +28,14 @@ def run_iteration_session(
     eval_command: str,
     eval_repo_path: Path | None,
     eval_overrides: list[str],
-    prewarm_command: str,
-    prewarm_watch_files: list[str],
     baseline_score: float | None,
     max_eval_calls: int,
-    eval_prewarm_state: tuple[tuple[str, bool, int, int], ...],
     maximize: bool,
 ) -> dict[str, object]:
     eval_state: dict[str, Any] = {
         "remaining": max_eval_calls,
         "baseline_score": baseline_score,
         "trials": [],
-        "prewarm_state": eval_prewarm_state,
         "pending_request": None,
         "requested_this_turn": False,
     }
@@ -118,8 +114,6 @@ def run_iteration_session(
                     eval_worktree,
                     eval_repo_path,
                     eval_overrides,
-                    prewarm_command,
-                    prewarm_watch_files,
                     eval_state,
                     pending_request,
                     maximize,
