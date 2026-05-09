@@ -336,6 +336,33 @@ class CodexAgent:
     def build_error(self, message: str) -> CodexAgentError:
         return CodexAgentError(message, self.session_log_path)
 
+    def _emit_progress(self, message: str) -> None:
+        print(message, flush=True)
+
+    def _emit_progress_text(self, text: str) -> None:
+        sys.stdout.write(text)
+        sys.stdout.flush()
+
+    def _emit_command_completed(self, command: CommandLogEntry) -> None:
+        details = [command.status or "unknown"]
+        if command.exit_code is not None:
+            details.append(f"exit_code={command.exit_code}")
+        if command.duration_ms is not None:
+            details.append(f"duration_ms={command.duration_ms}")
+        self._emit_progress(f"[Codex command completed] {', '.join(details)}")
+
+    def _emit_file_change_completed(self, state: _FileChangeState) -> None:
+        entries = state.to_entries()
+        if not entries:
+            self._emit_progress(f"[Codex file change] {state.status or 'completed'}")
+            return
+
+        changed_paths = ", ".join(
+            f"{entry.path} ({entry.kind or 'changed'})"
+            for entry in entries
+        )
+        self._emit_progress(f"[Codex file change] {state.status or 'completed'}: {changed_paths}")
+
     def _build_thread_params(
         self,
         cwd: str | None,
@@ -357,8 +384,19 @@ class CodexAgent:
         collector = _TurnLogCollector(user_request=instruction)
         last_logged_response: str | None = None
         did_finish_log = False
+        announced_command_ids: set[str] = set()
+        commands_without_trailing_newline: set[str] = set()
         thread_id = self._require_thread_id()
         self._session_log.append_turn_started(thread_id, instruction)
+        self._emit_progress("[Codex turn] started")
+
+        def announce_command(item_id: str, state: _CommandLogState, *, allow_unknown: bool = False) -> None:
+            if item_id in announced_command_ids:
+                return
+            if not allow_unknown and not state.command:
+                return
+            announced_command_ids.add(item_id)
+            self._emit_progress(f"[Codex command] $ {state.command or '(unknown command)'}")
 
         def append_response_snapshot(response_text: str) -> None:
             nonlocal last_logged_response
@@ -407,7 +445,9 @@ class CodexAgent:
                     item_type = item.get("type")
                     if isinstance(item_id, str) and item_id:
                         if item_type == "commandExecution":
-                            collector.command_state(item_id).update_from_item(item)
+                            command_state = collector.command_state(item_id)
+                            command_state.update_from_item(item)
+                            announce_command(item_id, command_state)
                         elif item_type == "fileChange":
                             collector.file_change_state(item_id).update_from_item(item)
                     continue
@@ -430,6 +470,11 @@ class CodexAgent:
                     output_text = self._extract_delta_text(params)
                     if isinstance(item_id, str) and output_text:
                         collector.command_state(item_id).append_output(output_text)
+                        self._emit_progress_text(output_text)
+                        if output_text.endswith("\n"):
+                            commands_without_trailing_newline.discard(item_id)
+                        else:
+                            commands_without_trailing_newline.add(item_id)
                     continue
 
                 if method == "item/completed":
@@ -441,6 +486,9 @@ class CodexAgent:
                             message_buffers[item_id] = text
                         last_message_text = text
                         append_response_snapshot(text)
+                        if text.strip():
+                            self._emit_progress("[Codex message]")
+                            self._emit_progress(text.strip())
                         if item.get("phase") == "final_answer":
                             final_answer_text = text
                     elif item.get("type") == "commandExecution":
@@ -448,6 +496,10 @@ class CodexAgent:
                         if isinstance(item_id, str) and item_id:
                             command_state = collector.command_state(item_id)
                             command_state.update_from_item(item)
+                            announce_command(item_id, command_state, allow_unknown=True)
+                            if item_id in commands_without_trailing_newline:
+                                self._emit_progress("")
+                                commands_without_trailing_newline.discard(item_id)
                             if command_state.status in {"failed", "declined"}:
                                 error_message = (
                                     f"Command `{command_state.command or '(unknown command)'}` ended with status "
@@ -456,12 +508,15 @@ class CodexAgent:
                                 if command_state.exit_code is not None:
                                     error_message = f"{error_message} (exit_code={command_state.exit_code})"
                                 collector.note_error(f"{error_message}.")
-                            self._session_log.append_command_completed(thread_id, command_state.to_entry())
+                            command_entry = command_state.to_entry()
+                            self._emit_command_completed(command_entry)
+                            self._session_log.append_command_completed(thread_id, command_entry)
                     elif item.get("type") == "fileChange":
                         item_id = item.get("id")
                         if isinstance(item_id, str) and item_id:
                             file_change_state = collector.file_change_state(item_id)
                             file_change_state.update_from_item(item)
+                            self._emit_file_change_completed(file_change_state)
                             if file_change_state.status in {"failed", "declined"}:
                                 collector.note_error(f"File change item ended with status {file_change_state.status}.")
                     continue
@@ -596,11 +651,14 @@ class CodexAgent:
             params = message.get("params", {})
             tool_name = params.get("tool", "")
             arguments = params.get("arguments", {})
+            tool_label = tool_name if isinstance(tool_name, str) and tool_name else "(unknown tool)"
+            self._emit_progress(f"[Codex tool] {tool_label} requested")
             if self._tool_handler is not None:
                 try:
                     handler_result = self._tool_handler(tool_name, arguments)
                     self._write_message({"id": message["id"], "result": handler_result})
                     self._log_tool_call(tool_name, handler_result)
+                    self._emit_tool_completed(tool_label, handler_result)
                 except Exception as exc:
                     error_result = {
                         "success": False,
@@ -608,6 +666,7 @@ class CodexAgent:
                     }
                     self._write_message({"id": message["id"], "result": error_result})
                     self._log_tool_call(tool_name, error_result)
+                    self._emit_tool_completed(tool_label, error_result)
             else:
                 no_handler_result = {
                     "success": False,
@@ -615,6 +674,7 @@ class CodexAgent:
                 }
                 self._write_message({"id": message["id"], "result": no_handler_result})
                 self._log_tool_call(tool_name, no_handler_result)
+                self._emit_tool_completed(tool_label, no_handler_result)
             return True
 
         raise self.build_error(
@@ -631,6 +691,10 @@ class CodexAgent:
             item.get("text", "") for item in content_items if isinstance(item, dict)
         )
         self._session_log.append_tool_call(thread_id, tool_name, success, result_text)
+
+    def _emit_tool_completed(self, tool_name: str, result: dict[str, Any]) -> None:
+        status = "succeeded" if result.get("success", False) else "failed"
+        self._emit_progress(f"[Codex tool] {tool_name} {status}")
 
     def _require_process(self) -> subprocess.Popen[str]:
         if self._process is None:

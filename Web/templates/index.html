@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NextResearcher</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
+  </head>
+  <body>
+    <main class="workspace">
+      <section class="control-panel" aria-labelledby="controls-title">
+        <header class="panel-header">
+          <div>
+            <p class="eyebrow">NextResearcher</p>
+            <h1 id="controls-title">Experiment Control</h1>
+          </div>
+          <span id="job-pill" class="status-pill">Idle</span>
+        </header>
+
+        <form id="config-form" class="config-form">
+          <div class="form-heading">
+            <label for="config-content">CodexConfig.toml</label>
+            <span class="path-label">{{ config_path }}</span>
+          </div>
+          <textarea id="config-content" class="config-editor" name="content" spellcheck="false">{{ config_text }}</textarea>
+          <div class="form-actions">
+            <button id="save-config" class="secondary-button" type="submit">Save Config</button>
+            <p id="config-status" class="inline-status">
+              {% if config_exists %}Loaded local config.{% else %}Loaded starter template.{% endif %}
+            </p>
+          </div>
+        </form>
+
+        <div class="primary-actions" aria-label="Experiment actions">
+          <button id="start-button" class="primary-button" type="button">Start Experiment</button>
+          <button id="reset-button" class="danger-button" type="button">Reset Experiment</button>
+          <button id="stop-button" class="danger-button" type="button" disabled>Stop Experiment</button>
+        </div>
+
+        <form id="backend-input-form" class="backend-input-panel" hidden>
+          <div class="input-heading">
+            <div>
+              <p class="eyebrow">Backend Input</p>
+              <h2>Response Needed</h2>
+            </div>
+          </div>
+          <p id="backend-input-prompt" class="backend-prompt"></p>
+          <div id="backend-question-row" class="input-detail" hidden>
+            <span>Question</span>
+            <p id="backend-question"></p>
+          </div>
+          <div id="backend-recommendation-row" class="input-detail" hidden>
+            <span>Recommendation</span>
+            <p id="backend-recommendation"></p>
+          </div>
+          <textarea
+            id="backend-response"
+            class="backend-response"
+            name="response"
+            placeholder="Leave blank to accept the recommendation."
+            spellcheck="false"
+          ></textarea>
+          <div class="form-actions">
+            <button id="submit-backend-input" class="secondary-button" type="submit">Submit Response</button>
+            <p id="backend-input-status" class="inline-status">Waiting for response.</p>
+          </div>
+        </form>
+      </section>
+
+      <section class="log-panel" aria-labelledby="log-title">
+        <header class="log-header">
+          <div>
+            <p class="eyebrow">Backend</p>
+            <h2 id="log-title">Live Log</h2>
+          </div>
+          <span id="connection-status" class="connection-status">Connecting</span>
+        </header>
+        <div id="log-output" class="log-output" role="log" aria-live="polite">
+          <div class="log-line status-line">
+            <span class="log-time">--:--:--</span>
+            <span class="log-kind">status</span>
+            <span class="log-message">Backend is idle.</span>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script src="{{ url_for('static', path='/app.js') }}"></script>
+  </body>
+</html>
