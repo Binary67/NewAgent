@@ -161,16 +161,16 @@ def run_requested_eval(
         if eval_repo_path:
             apply_eval_overrides(eval_repo_path, eval_worktree, eval_overrides)
 
-        prewarm_ok, prewarm_error, prewarm_state = _sync_eval_worktree_prewarm_if_needed(
-            eval_worktree,
-            prewarm_command,
-            prewarm_watch_files,
-            eval_state["prewarm_state"],
-        )
-        if not prewarm_ok:
-            return f"Evaluation error: {prewarm_error}"
+        if prewarm_command:
+            prewarm_ok, prewarm_error = run_prewarm_command(
+                eval_worktree,
+                prewarm_command,
+                action="Rewarming eval worktree",
+            )
+            if not prewarm_ok:
+                return f"Evaluation error: {prewarm_error}"
+            eval_state["prewarm_state"] = get_prewarm_watch_state(eval_worktree, prewarm_watch_files)
 
-        eval_state["prewarm_state"] = prewarm_state
         score_stdout, score_error = run_eval(eval_command, eval_worktree)
         if score_error:
             return f"Evaluation error: {score_error}"
@@ -249,38 +249,14 @@ def _build_prewarm_environment() -> dict[str, str]:
 
 def _sync_eval_worktree(eval_worktree: Path, commit_hash: str) -> None:
     subprocess.run(
-        ["git", "-C", str(eval_worktree), "checkout", commit_hash, "--", "."],
+        ["git", "-C", str(eval_worktree), "reset", "--hard", commit_hash],
         capture_output=True,
         text=True,
         check=True,
     )
-
-
-def _sync_eval_worktree_prewarm_if_needed(
-    eval_worktree: Path,
-    prewarm_command: str,
-    prewarm_watch_files: list[str],
-    previous_state: tuple[tuple[str, bool, int, int], ...],
-) -> tuple[bool, str, tuple[tuple[str, bool, int, int], ...]]:
-    if not prewarm_command:
-        return (True, "", previous_state)
-
-    if not prewarm_watch_files:
-        print(f"No prewarm watch files configured; skipping eval prewarm check: {eval_worktree}")
-        return (True, "", previous_state)
-
-    current_state = get_prewarm_watch_state(eval_worktree, prewarm_watch_files)
-    if current_state == previous_state:
-        print(f"Eval prewarm watch files unchanged; skipping prewarm: {eval_worktree}")
-        return (True, "", previous_state)
-
-    print(f"Eval prewarm watch files changed; rerunning prewarm: {eval_worktree}")
-    prewarm_ok, prewarm_error = run_prewarm_command(
-        eval_worktree,
-        prewarm_command,
-        action="Rewarming eval worktree",
+    subprocess.run(
+        ["git", "-C", str(eval_worktree), "clean", "-fdx"],
+        capture_output=True,
+        text=True,
+        check=True,
     )
-    if not prewarm_ok:
-        return (False, prewarm_error, previous_state)
-
-    return (True, "", get_prewarm_watch_state(eval_worktree, prewarm_watch_files))
